@@ -1,0 +1,4 @@
+
+- Create structs for common params with defaults
+- Proof
+- Encoding

@@ -1,0 +1,7 @@
+[package]
+name = "urkel-rs"
+version = "0.1.0"
+authors = ["David Bryson <dbryson@mitre.org>"]
+
+[dependencies]
+tiny-keccak = "1.4.2"
