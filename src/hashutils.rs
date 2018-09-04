@@ -23,52 +23,6 @@ impl fmt::LowerHex for Digest {
     }
 }
 
-trait Hasher {
-    fn hash_content(data: &[u8]) -> Digest;
-    fn hash_leaf(key: Digest, value: &[u8]) -> Digest;
-    fn hash_internal(left: Digest, right: Digest) -> Digest;
-    fn key_size() -> usize;
-}
-
-// NOTE: How best to do this without dead code
-struct Sha3 {}
-
-impl Hasher for Sha3 {
-    fn hash_content(data: &[u8]) -> Digest {
-        let mut hash = Keccak::new_sha3_256();
-        let mut res: [u8; 32] = [0; 32];
-        hash.update(&data);
-        hash.finalize(&mut res);
-        Digest(res)
-    }
-
-    fn hash_leaf(key: Digest, value: &[u8]) -> Digest {
-        let mut hash = Keccak::new_sha3_256();
-        let mut res: [u8; 32] = [0; 32];
-
-        let val = sha3(value);
-        hash.update(&[LEAF_PREFIX]);
-        hash.update(&key.0);
-        hash.update(&val.0);
-        hash.finalize(&mut res);
-        Digest(res)
-    }
-
-    fn hash_internal(left: Digest, right: Digest) -> Digest {
-        let mut hash = Keccak::new_sha3_256();
-        let mut res: [u8; 32] = [0; 32];
-
-        hash.update(&[INTERNAL_PREFIX]);
-        hash.update(&left.0);
-        hash.update(&right.0);
-        hash.finalize(&mut res);
-        Digest(res)
-    }
-    fn key_size() -> usize {
-        return 256;
-    }
-}
-
 pub fn sha3(data: &[u8]) -> Digest {
     let mut hash = Keccak::new_sha3_256();
     let mut res: [u8; 32] = [0; 32];
@@ -98,4 +52,20 @@ pub fn sha3_internal(left: Digest, right: Digest) -> Digest {
     hash.update(&right.0);
     hash.finalize(&mut res);
     Digest(res)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn should_do_hasher() {
+        let v = sha3(b"Helloworld");
+        assert_eq!(32, v.0.len());
+
+        assert_eq!(
+            "0xac1824d4443ee9a8fcb7026f1b4751b60e0c716ad2d7eaaf8b76b2c44707e6ae",
+            format!("{:x}", v)
+        );
+    }
 }

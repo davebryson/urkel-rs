@@ -1,7 +1,7 @@
 use hashutils::{sha3, sha3_internal, sha3_leaf, Digest};
 
 #[derive(Clone)]
-struct NodeStore {
+pub struct NodeStore {
     data: Digest,
     index: usize,
     flags: usize,
@@ -18,7 +18,7 @@ impl Default for NodeStore {
 }
 
 #[derive(Clone)]
-struct ValueStore {
+pub struct ValueStore {
     vindex: usize,
     vpos: usize,
     vsize: usize,
@@ -37,26 +37,18 @@ impl Default for ValueStore {
 pub enum Tree {
     Empty {},
     Hash {
-        data: Digest,
-        index: usize,
-        flags: usize,
+        params: NodeStore,
     },
     Leaf {
         key: Digest,
         value: Vec<u8>,
-        index: usize,
-        flags: usize,
-        data: Digest,
-        vindex: usize,
-        vpos: usize,
-        vsize: usize,
+        params: NodeStore,
+        content: ValueStore,
     },
     Internal {
         left: Box<Tree>,
         right: Box<Tree>,
-        index: usize,
-        flags: usize,
-        data: Digest,
+        params: NodeStore,
     },
 }
 
@@ -64,7 +56,7 @@ impl Tree {
     fn hash(&self) -> Digest {
         match self {
             Tree::Empty {} => sha3(&[0; 32]),
-            Tree::Hash { data, .. } => Digest(data.0),
+            Tree::Hash { params } => Digest(params.data.0),
             Tree::Leaf { key, value, .. } => sha3_leaf(Digest(key.0), value),
             Tree::Internal { left, right, .. } => {
                 let lh = left.as_ref().hash();
@@ -82,12 +74,8 @@ impl Tree {
         Tree::Leaf {
             key: key,
             value: value,
-            data: Default::default(),
-            index: 0,
-            flags: 0,
-            vindex: 0,
-            vpos: 0,
-            vsize: 0,
+            params: Default::default(),
+            content: Default::default(),
         }
     }
 }
@@ -108,7 +96,7 @@ pub struct MerkleTree {
 }
 
 impl MerkleTree {
-    pub fn new() -> Self {
+    pub fn new() -> MerkleTree {
         MerkleTree {
             root: Some(Tree::empty()),
             keysize: 256,
@@ -124,13 +112,85 @@ impl MerkleTree {
         let newroot = self
             .root
             .take()
-            .map(|t| MerkleTree::insert_leaf(t, self.keysize, nkey, value));
+            .map(|t| MerkleTree::do_insert(t, self.keysize, nkey, value));
         self.root = newroot;
     }
 
+    fn do_insert(mut root: Tree, keysize: usize, nkey: Digest, value: Vec<u8>) -> Tree {
+        let mut depth = 0;
+
+        let mut new_root = Tree::leaf(nkey, value);
+        let leaf_hash = new_root.hash();
+
+        let mut to_hash = Vec::<Tree>::new();
+        loop {
+            match root {
+                Tree::Empty {} => break,
+                Tree::Hash { .. } => { /*should push current*/ }
+                Tree::Leaf {
+                    key, value, params, ..
+                } => {
+                    if nkey == key {
+                        if leaf_hash == params.data {
+                            // TODO: Need to clone/copy?
+                            return Tree::leaf(key, value);
+                        }
+                        break;
+                    }
+
+                    while has_bit(&nkey, depth) == has_bit(&key, depth) {
+                        to_hash.push(Tree::Empty {});
+                        depth += 1;
+                    }
+
+                    //TODO: I need to clone the leaf?
+                    to_hash.push(Tree::leaf(key, value));
+
+                    depth += 1;
+                    break;
+                }
+                Tree::Internal { left, right, .. } => {
+                    if depth == keysize {
+                        panic!(format!("Missing node at depth {}", depth));
+                    }
+
+                    if has_bit(&nkey, depth) {
+                        to_hash.push(*left);
+                        root = *right;
+                    } else {
+                        to_hash.push(*right);
+                        root = *left
+                    }
+                }
+            }
+        }
+
+        // Note: into_iter allows you to move n...
+        for n in to_hash.into_iter().rev() {
+            depth -= 1;
+            if has_bit(&nkey, depth) {
+                new_root = Tree::Internal {
+                    left: Box::new(n),
+                    right: Box::new(new_root),
+                    params: Default::default(),
+                };
+            } else {
+                new_root = Tree::Internal {
+                    left: Box::new(new_root),
+                    right: Box::new(n),
+                    params: Default::default(),
+                };
+            }
+        }
+
+        return new_root;
+    }
+
+    /*
     fn insert_leaf(root: Tree, keysize: usize, nkey: Digest, value: Vec<u8>) -> Tree {
         let mut depth = 0;
-        let leaf_hash = sha3_leaf(nkey.clone(), &value);
+        let mut new_root = Tree::leaf(nkey, value);
+        let leaf_hash = new_root.hash();
 
         let mut to_hash = Vec::<Tree>::new();
         let mut current = Vec::<Tree>::new();
@@ -144,11 +204,11 @@ impl MerkleTree {
                     Tree::Empty {} => break 'outer,
                     Tree::Hash { .. } => { /*should push current*/ }
                     Tree::Leaf {
-                        key, value, data, ..
+                        key, value, params, ..
                     } => {
                         if nkey == key {
-                            if leaf_hash == data {
-                                // TODO: Need to clone/copy
+                            if leaf_hash == params.data {
+                                // TODO: Need to clone/copy?
                                 return Tree::leaf(key, value);
                             }
                             break 'outer;
@@ -159,7 +219,7 @@ impl MerkleTree {
                             depth += 1;
                         }
 
-                        //TODO: I need to clone the leaf
+                        //TODO: I need to clone the leaf?
                         to_hash.push(Tree::leaf(key, value));
 
                         depth += 1;
@@ -184,8 +244,6 @@ impl MerkleTree {
             current = next;
         }
 
-        let mut new_root = Tree::leaf(nkey, value);
-
         // Note: into_iter allows you to move n...
         for n in to_hash.into_iter().rev() {
             depth -= 1;
@@ -193,23 +251,19 @@ impl MerkleTree {
                 new_root = Tree::Internal {
                     left: Box::new(n),
                     right: Box::new(new_root),
-                    index: 0,
-                    flags: 0,
-                    data: Default::default(),
+                    params: Default::default(),
                 };
             } else {
                 new_root = Tree::Internal {
                     left: Box::new(new_root),
                     right: Box::new(n),
-                    index: 0,
-                    flags: 0,
-                    data: Default::default(),
+                    params: Default::default(),
                 };
             }
         }
 
         return new_root;
-    }
+    }*/
 
     pub fn get(&self, nkey: Digest) -> Option<Vec<u8>> {
         let mut depth = 0;

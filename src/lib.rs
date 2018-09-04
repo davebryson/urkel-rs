@@ -22,4 +22,10 @@ mod tests {
         assert_eq!(t.get(sha3(b"name-1")), Some(Vec::from("value-1")));
         assert_eq!(t.get(sha3(b"name-2")), Some(Vec::from("value-2")));
     }
+
+    #[test]
+    fn should_handle_get_on_nullnode() {
+        let t = MerkleTree::new();
+        assert_eq!(t.get(sha3(b"name-2")), None);
+    }
 }
