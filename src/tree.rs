@@ -1,4 +1,5 @@
 use hashutils::{sha3, sha3_internal, sha3_leaf, Digest};
+use proof::{Proof, ProofType};
 
 #[derive(Clone)]
 pub struct NodeStore {
@@ -80,7 +81,7 @@ impl Tree {
     }
 }
 
-fn has_bit(key: &Digest, index: usize) -> bool {
+pub fn has_bit(key: &Digest, index: usize) -> bool {
     let oct = index >> 3;
     let bit = index & 7;
     match (key.0[oct] >> (7 - bit)) & 1 {
@@ -287,5 +288,58 @@ impl MerkleTree {
                 _ => return None,
             }
         }
+    }
+
+    /*pub fn prove(&mut self, key: Digest) -> Option<Proof> {
+        //let current_root = self.root.as_mut();
+        let result = self
+            .root
+            .map(|ref mut t| MerkleTree::do_proof(t, key, self.keysize));
+        //let result = self
+        //    .root
+        //    .take()
+        //    .map(|t| MerkleTree::do_proof(t, key, self.keysize));
+        result
+    }*/
+
+    pub fn prove(&self, nkey: Digest) -> Option<Proof> {
+        let mut depth = 0;
+        let mut proof = Proof::new();
+
+        let keysize = self.keysize;
+        let mut current = self.root.as_ref().unwrap();
+        loop {
+            match current {
+                Tree::Empty {} => break,
+                Tree::Hash { .. } => { /*should push current*/ }
+                Tree::Internal { left, right, .. } => {
+                    if depth == keysize {
+                        panic!(format!("Missing node at depth {}", depth));
+                    }
+
+                    if has_bit(&nkey, depth) {
+                        proof.push(left.hash());
+                        current = &*right;
+                    } else {
+                        proof.push(right.hash());
+                        current = &*left
+                    }
+                    depth += 1;
+                }
+                Tree::Leaf { key, value, .. } => {
+                    if nkey == *key {
+                        proof.proof_type = ProofType::Exists;
+                        proof.value = Some(value.to_vec());
+                    } else {
+                        proof.proof_type = ProofType::Collision;
+                        proof.key = Some(*key);
+                        proof.hash = Some(sha3(value.as_slice()));
+                    }
+                    break;
+                }
+            }
+        }
+
+        return Some(proof);
     }
 }
