@@ -126,6 +126,7 @@ impl MerkleTree {
     fn do_insert(mut root: Tree, keysize: usize, nkey: Digest, value: Vec<u8>) -> Tree {
         let mut depth = 0;
 
+        // NOTE: Verify problem could be here... see go version
         let mut new_root = Tree::leaf(nkey, value, Default::default());
         let leaf_hash = new_root.hash();
 
