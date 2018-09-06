@@ -1,3 +1,4 @@
+use sha2::Sha256;
 use std::fmt;
 use tiny_keccak::Keccak;
 
@@ -66,6 +67,15 @@ pub fn sha3_internal(left: Digest, right: Digest) -> Digest {
     hash.finalize(&mut res);
     Digest(res)
 }
+
+/*pub fn h256(data: &[u8]) -> Digest {
+    let mut hasher = Sha256::default();
+    hasher.input(data);
+
+    let res = hasher.result();
+
+    Digest(res)
+}*/
 
 #[cfg(test)]
 mod tests {

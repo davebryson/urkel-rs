@@ -100,27 +100,28 @@ impl Proof {
         };
 
         let mut next = leaf;
-        //let mut depth = self.depth();
+        let mut depth = self.depth() - 1;
 
-        for (c, n) in self.node_hashes.iter().enumerate().rev() {
-            if has_bit(&key, c) {
-                println!("HERE");
+        for n in self.node_hashes.iter().rev() {
+            if has_bit(&key, depth) {
                 next = sha3_internal(*n, next)
             } else {
-                println!("OR _ HERE");
                 next = sha3_internal(next, *n)
             }
-            //depth -= 1;
+
+            if depth > 0 {
+                depth -= 1;
+            }
         }
 
-        //println!("NEXT {:?}", next);
-        //println!("ROOT {:?}", root_hash);
+        println!("NEXT {:?}", next);
+        println!("ROOT {:?}", root_hash);
 
         // TODO: THIS IS FAILING
         if next != root_hash {
             Err("Head Mismatch")
         } else {
-            self.value.take().ok_or("bad verification")
+            self.value.take().ok_or("Bad Verification")
         }
     }
 }
