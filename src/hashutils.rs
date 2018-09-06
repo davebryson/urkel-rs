@@ -35,10 +35,11 @@ pub fn sha3_leaf(key: Digest, value: &[u8]) -> Digest {
     let mut hash = Keccak::new_sha3_256();
     let mut res: [u8; 32] = [0; 32];
 
-    let val = sha3(value);
+    //let val = sha3(value);
     hash.update(&[LEAF_PREFIX]);
     hash.update(&key.0);
-    hash.update(&val.0);
+    //hash.update(&val.0);
+    hash.update(value);
     hash.finalize(&mut res);
     Digest(res)
 }
@@ -48,6 +49,7 @@ pub fn sha3_value(key: Digest, value: &[u8]) -> Digest {
     let mut res: [u8; 32] = [0; 32];
 
     let val = sha3(value);
+    hash.update(&[LEAF_PREFIX]);
     hash.update(&key.0);
     hash.update(&val.0);
     hash.finalize(&mut res);

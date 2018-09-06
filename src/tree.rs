@@ -56,10 +56,11 @@ pub enum Tree {
 impl Tree {
     fn hash(&self) -> Digest {
         match self {
-            Tree::Empty {} => sha3(&[0; 32]),
+            Tree::Empty {} => Digest([0; 32]), /*sha3(&[0; 32])*/
             Tree::Hash { params } => Digest(params.data.0),
             Tree::Leaf { key, value, .. } => sha3_leaf(Digest(key.0), value),
             Tree::Internal { left, right, .. } => {
+                // TODO: Should check for nodestore.data
                 let lh = left.as_ref().hash();
                 let rh = right.as_ref().hash();
                 sha3_internal(lh, rh)

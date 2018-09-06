@@ -83,7 +83,7 @@ impl Proof {
         }
 
         let leaf = match self.proof_type {
-            ProofType::Deadend => sha3(&[0; 32]),
+            ProofType::Deadend => Digest([0; 32]), /*sha3(&[0; 32])*/
             ProofType::Collision => {
                 if self.key == Some(key) {
                     return Err("Same Key");
@@ -93,23 +93,31 @@ impl Proof {
                 sha3_leaf(k, &h.0)
             }
             ProofType::Exists => {
+                println!("EXISTS");
                 let v = self.value.as_ref().unwrap();
                 sha3_value(key, v.as_slice())
             }
         };
 
         let mut next = leaf;
-        let mut depth = self.depth();
-        for n in self.node_hashes.iter().rev() {
-            depth -= 1;
-            if has_bit(&n, depth) {
+        //let mut depth = self.depth();
+
+        for (c, n) in self.node_hashes.iter().enumerate().rev() {
+            if has_bit(&key, c) {
+                println!("HERE");
                 next = sha3_internal(*n, next)
             } else {
+                println!("OR _ HERE");
                 next = sha3_internal(next, *n)
             }
+            //depth -= 1;
         }
 
-        if next == root_hash {
+        //println!("NEXT {:?}", next);
+        //println!("ROOT {:?}", root_hash);
+
+        // TODO: THIS IS FAILING
+        if next != root_hash {
             Err("Head Mismatch")
         } else {
             self.value.take().ok_or("bad verification")
