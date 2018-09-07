@@ -1,4 +1,4 @@
-use hashutils::{sha3, sha3_internal, sha3_leaf, sha3_value, Digest};
+use hashutils::{sha3, sha3_internal, sha3_value, sha3_zero_hash, Digest};
 use proof::{Proof, ProofType};
 
 #[derive(Clone)]
@@ -56,7 +56,7 @@ pub enum Tree {
 impl Tree {
     fn hash(&self) -> Digest {
         match self {
-            Tree::Empty {} => Digest([0; 32]), /*sha3(&[0; 32])*/
+            Tree::Empty {} => sha3_zero_hash(),
             Tree::Hash { params } => Digest(params.data.0),
             Tree::Leaf {
                 key: _,
@@ -65,7 +65,6 @@ impl Tree {
                 ..
             } => Digest(params.data.0),
             Tree::Internal { left, right, .. } => {
-                // TODO: Should check for nodestore.data
                 let lh = left.as_ref().hash();
                 let rh = right.as_ref().hash();
                 sha3_internal(lh, rh)
@@ -125,12 +124,9 @@ impl MerkleTree {
 
     fn do_insert(mut root: Tree, keysize: usize, nkey: Digest, value: Vec<u8>) -> Tree {
         let mut depth = 0;
-
-        // NOTE: Verify problem could be here... see go version
-        let mut new_root = Tree::leaf(nkey, value, Default::default());
-        let leaf_hash = new_root.hash();
-
+        let leaf_hash = sha3_value(nkey, value.as_slice());
         let mut to_hash = Vec::<Tree>::new();
+
         loop {
             match root {
                 Tree::Empty {} => break,
@@ -140,7 +136,6 @@ impl MerkleTree {
                 } => {
                     if nkey == key {
                         if leaf_hash == params.data {
-                            // TODO: Need to clone/copy?
                             return Tree::leaf(key, value, params);
                         }
                         break;
@@ -151,7 +146,6 @@ impl MerkleTree {
                         depth += 1;
                     }
 
-                    //TODO: I need to clone the leaf?
                     to_hash.push(Tree::leaf(key, value, params));
 
                     depth += 1;
@@ -173,7 +167,13 @@ impl MerkleTree {
             }
         }
 
-        // Note: into_iter allows you to move n...
+        let params = NodeStore {
+            data: leaf_hash,
+            index: 0,
+            flags: 0,
+        };
+        let mut new_root = Tree::leaf(nkey, value, params);
+
         for n in to_hash.into_iter().rev() {
             depth -= 1;
             if has_bit(&nkey, depth) {

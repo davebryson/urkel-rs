@@ -1,4 +1,3 @@
-use sha2::Sha256;
 use std::fmt;
 use tiny_keccak::Keccak;
 
@@ -36,10 +35,8 @@ pub fn sha3_leaf(key: Digest, value: &[u8]) -> Digest {
     let mut hash = Keccak::new_sha3_256();
     let mut res: [u8; 32] = [0; 32];
 
-    //let val = sha3(value);
     hash.update(&[LEAF_PREFIX]);
     hash.update(&key.0);
-    //hash.update(&val.0);
     hash.update(value);
     hash.finalize(&mut res);
     Digest(res)
@@ -68,27 +65,6 @@ pub fn sha3_internal(left: Digest, right: Digest) -> Digest {
     Digest(res)
 }
 
-/*pub fn h256(data: &[u8]) -> Digest {
-    let mut hasher = Sha256::default();
-    hasher.input(data);
-
-    let res = hasher.result();
-
-    Digest(res)
-}*/
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn should_do_hasher() {
-        let v = sha3(b"Helloworld");
-        assert_eq!(32, v.0.len());
-
-        assert_eq!(
-            "0xac1824d4443ee9a8fcb7026f1b4751b60e0c716ad2d7eaaf8b76b2c44707e6ae",
-            format!("{:x}", v)
-        );
-    }
+pub fn sha3_zero_hash() -> Digest {
+    Digest([0; 32])
 }

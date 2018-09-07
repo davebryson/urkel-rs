@@ -1,4 +1,4 @@
-use hashutils::{sha3, sha3_internal, sha3_leaf, sha3_value, Digest};
+use hashutils::{sha3_internal, sha3_leaf, sha3_value, sha3_zero_hash, Digest};
 use tree::has_bit;
 
 #[derive(Eq, PartialEq, Clone)]
@@ -18,7 +18,7 @@ pub struct Proof {
 }
 
 impl Proof {
-    // Default Proof (deadend) built-up in the tree::prove()...
+    // Default Proof (deadend)
     pub fn new() -> Self {
         Proof {
             proof_type: ProofType::Deadend,
@@ -83,7 +83,7 @@ impl Proof {
         }
 
         let leaf = match self.proof_type {
-            ProofType::Deadend => Digest([0; 32]), /*sha3(&[0; 32])*/
+            ProofType::Deadend => sha3_zero_hash(), /*sha3(&[0; 32])*/
             ProofType::Collision => {
                 if self.key == Some(key) {
                     return Err("Same Key");
@@ -93,7 +93,6 @@ impl Proof {
                 sha3_leaf(k, &h.0)
             }
             ProofType::Exists => {
-                println!("EXISTS");
                 let v = self.value.as_ref().unwrap();
                 sha3_value(key, v.as_slice())
             }
@@ -114,10 +113,6 @@ impl Proof {
             }
         }
 
-        println!("NEXT {:?}", next);
-        println!("ROOT {:?}", root_hash);
-
-        // TODO: THIS IS FAILING
         if next != root_hash {
             Err("Head Mismatch")
         } else {
