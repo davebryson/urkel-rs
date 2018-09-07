@@ -1,3 +1,0 @@
-
-- Test Proof - Verify broken on mismatch head
-- Encoding
