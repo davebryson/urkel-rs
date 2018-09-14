@@ -2,6 +2,7 @@ extern crate urkel_rs;
 
 use urkel_rs::hashutils::sha3;
 use urkel_rs::proof::ProofType;
+use urkel_rs::store::Store;
 use urkel_rs::tree::MerkleTree;
 
 #[test]
@@ -71,4 +72,25 @@ fn santity_check() {
         "0xac1824d4443ee9a8fcb7026f1b4751b60e0c716ad2d7eaaf8b76b2c44707e6ae",
         format!("{:x}", v)
     );
+}
+
+#[test]
+fn should_commit() {
+    let mut t = MerkleTree::new();
+    for i in 0..5 {
+        let k = sha3(format!("name-{}", i).as_bytes());
+        let v = Vec::from(format!("value-{}", i));
+        t.insert(k, v);
+    }
+
+    t.commit();
+
+    assert_eq!(t.get(sha3(b"name-1")), Some(Vec::from("value-1")));
+}
+
+fn store_test() {
+    let mut store = Store::open();
+    store.write(String::from("one").as_bytes());
+    store.write(String::from("two").as_bytes());
+    println!("Pos {}", store.position());
 }

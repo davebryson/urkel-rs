@@ -1,7 +1,10 @@
 use hashutils::{sha3, sha3_internal, sha3_value, sha3_zero_hash, Digest};
+use memorydb::MemoryDb;
 use proof::{Proof, ProofType};
+use std::fmt;
 
-#[derive(Clone)]
+/// Store the hash of the node along with file store information
+#[derive(Clone, Copy)]
 pub struct NodeStore {
     data: Digest,
     index: usize,
@@ -18,7 +21,8 @@ impl Default for NodeStore {
     }
 }
 
-#[derive(Clone)]
+/// Used in leaf to store the actual value - mainly needed for filestore information
+#[derive(Clone, Copy)]
 pub struct ValueStore {
     vindex: usize,
     vpos: usize,
@@ -35,6 +39,7 @@ impl Default for ValueStore {
     }
 }
 
+/// Change to Node??
 pub enum Tree {
     Empty {},
     Hash {
@@ -54,7 +59,8 @@ pub enum Tree {
 }
 
 impl Tree {
-    fn hash(&self) -> Digest {
+    // Generate hash for specific node
+    pub fn hash(&self) -> Digest {
         match self {
             Tree::Empty {} => sha3_zero_hash(),
             Tree::Hash { params } => Digest(params.data.0),
@@ -72,16 +78,62 @@ impl Tree {
         }
     }
 
+    // Convert current node into a HashNode. Can't seem to make From/Into trait work for an enum
+    pub fn to_hash_node(&self) -> Self {
+        match self {
+            Tree::Leaf {
+                key: _,
+                value: _,
+                params,
+                ..
+            } => Tree::Hash {
+                params: NodeStore {
+                    data: self.hash(),
+                    index: params.index,
+                    flags: params.flags,
+                },
+            },
+            Tree::Internal {
+                left: _,
+                right: _,
+                params,
+            } => Tree::Hash {
+                params: NodeStore {
+                    data: self.hash(),
+                    index: params.index,
+                    flags: params.flags,
+                },
+            },
+            Tree::Hash { params } => Tree::Hash { params: *params },
+            Tree::Empty {} => Tree::empty(),
+        }
+    }
+
+    // Create an Empty Node
     fn empty() -> Self {
         Tree::Empty {}
     }
 
+    // Create basic Leaf Node
     fn leaf(key: Digest, value: Vec<u8>, params: NodeStore) -> Self {
         Tree::Leaf {
-            key: key,
-            value: value,
-            params: params,
+            key,
+            value,
+            params,
             content: Default::default(),
+        }
+    }
+}
+
+impl fmt::Debug for Tree {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Tree::Empty {} => write!(f, "Tree::Empty"),
+            Tree::Leaf { key, value, .. } => write!(f, "Tree:Leaf({:?})", value),
+            Tree::Internal { left, right, .. } => {
+                write!(f, "Tree:Internal({:?}, {:?})", left, right)
+            }
+            Tree::Hash { params } => write!(f, "Tree::Hash()"),
         }
     }
 }
@@ -99,6 +151,7 @@ pub fn has_bit(key: &Digest, index: usize) -> bool {
 pub struct MerkleTree {
     root: Option<Tree>,
     keysize: usize,
+    store: MemoryDb,
 }
 
 impl MerkleTree {
@@ -106,6 +159,7 @@ impl MerkleTree {
         MerkleTree {
             root: Some(Tree::empty()),
             keysize: 256,
+            store: Default::default(),
         }
     }
 
@@ -130,7 +184,7 @@ impl MerkleTree {
         loop {
             match root {
                 Tree::Empty {} => break,
-                Tree::Hash { .. } => { /*should push current*/ }
+                Tree::Hash { .. } => { /*should pull from store*/ }
                 Tree::Leaf {
                     key, value, params, ..
                 } => {
@@ -163,6 +217,7 @@ impl MerkleTree {
                         to_hash.push(*right);
                         root = *left
                     }
+                    depth += 1;
                 }
             }
         }
@@ -191,7 +246,7 @@ impl MerkleTree {
             }
         }
 
-        return new_root;
+        new_root
     }
 
     pub fn get(&self, nkey: Digest) -> Option<Vec<u8>> {
@@ -203,6 +258,8 @@ impl MerkleTree {
                     if nkey != *key {
                         return None;
                     }
+                    // if the current node has a value return it
+                    // else pull from store
                     return Some(value.to_vec());
                 }
                 Tree::Internal { left, right, .. } => {
@@ -212,6 +269,14 @@ impl MerkleTree {
                         current = &*left;
                     }
                     depth += 1;
+                }
+                Tree::Hash { params } => {
+                    // Pull from storage
+                    if let Some(x) = self.store.get(params.data) {
+                        current = x
+                    } else {
+                        return None;
+                    }
                 }
                 _ => return None,
             }
@@ -227,7 +292,7 @@ impl MerkleTree {
         loop {
             match current {
                 Tree::Empty {} => break,
-                Tree::Hash { .. } => { /*should push current*/ }
+                Tree::Hash { .. } => { /* TODO: should pull from store */ }
                 Tree::Internal { left, right, .. } => {
                     if depth == keysize {
                         panic!(format!("Missing node at depth {}", depth));
@@ -256,6 +321,42 @@ impl MerkleTree {
             }
         }
 
-        return Some(proof);
+        Some(proof)
+    }
+
+    // Commit subtree to storage and return a new Hashnode root.
+    pub fn commit(&mut self) {
+        let newroot = self.root.take().map(|t| self.write(t));
+        self.root = newroot;
+    }
+
+    fn write(&mut self, n: Tree) -> Tree {
+        match n {
+            Tree::Empty {} => Tree::empty(),
+            Tree::Internal { left, right, .. } => {
+                // Don't necessarily like the recursive call
+                // but not sure of a better way to do it...
+                let left_result = self.write(*left);
+                let right_result = self.write(*right);
+
+                let mut node = Tree::Internal {
+                    left: Box::new(left_result),
+                    right: Box::new(right_result),
+                    params: Default::default(),
+                };
+
+                println!("Store node {:x}", node.hash());
+                self.store.put(node)
+            }
+            Tree::Leaf {
+                key, value, params, ..
+            } => {
+                // Store node
+                //println!("Store leaf {:x}", n.hash());
+                let l = Tree::leaf(key, value.to_vec(), params);
+                self.store.put(l)
+            }
+            Tree::Hash { params } => Tree::Hash { params: params },
+        }
     }
 }
