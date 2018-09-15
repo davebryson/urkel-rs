@@ -1,0 +1,7 @@
+
+- Refactor Tree -> Node
+- Move do_insert and write to function outside MerkleTree
+- Rename MerkleTree -> UrkelTree
+- Make store work
+- Try with RocksDb
+- Abstract "Hasher"
