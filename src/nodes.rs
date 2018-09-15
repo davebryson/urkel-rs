@@ -1,4 +1,4 @@
-use hashutils::{sha3, sha3_internal, sha3_value, sha3_zero_hash, Digest};
+use hashutils::{sha3_internal, sha3_zero_hash, Digest};
 use std::fmt;
 
 /// Store the hash of the node along with file store information
@@ -61,12 +61,7 @@ impl Node {
         match self {
             Node::Empty {} => sha3_zero_hash(),
             Node::Hash { params } => Digest(params.data.0),
-            Node::Leaf {
-                key: _,
-                value: _,
-                params,
-                ..
-            } => Digest(params.data.0),
+            Node::Leaf { params, .. } => Digest(params.data.0),
             Node::Internal { left, right, .. } => {
                 let lh = left.as_ref().hash();
                 let rh = right.as_ref().hash();
@@ -78,23 +73,14 @@ impl Node {
     // Convert current node into a HashNode. Can't seem to make From/Into trait work for an enum
     pub fn to_hash_node(&self) -> Self {
         match self {
-            Node::Leaf {
-                key: _,
-                value: _,
-                params,
-                ..
-            } => Node::Hash {
+            Node::Leaf { params, .. } => Node::Hash {
                 params: NodeStore {
                     data: self.hash(),
                     index: params.index,
                     flags: params.flags,
                 },
             },
-            Node::Internal {
-                left: _,
-                right: _,
-                params,
-            } => Node::Hash {
+            Node::Internal { params, .. } => Node::Hash {
                 params: NodeStore {
                     data: self.hash(),
                     index: params.index,
@@ -126,11 +112,11 @@ impl fmt::Debug for Node {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             Node::Empty {} => write!(f, "Node::Empty"),
-            Node::Leaf { key, value, .. } => write!(f, "Node:Leaf({:?})", value),
+            Node::Leaf { value, .. } => write!(f, "Node:Leaf({:?})", value),
             Node::Internal { left, right, .. } => {
                 write!(f, "Node:Internal({:?}, {:?})", left, right)
             }
-            Node::Hash { params } => write!(f, "Node::Hash()"),
+            Node::Hash { params } => write!(f, "Node::Hash({:?})", params.data),
         }
     }
 }

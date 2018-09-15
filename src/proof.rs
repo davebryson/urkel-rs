@@ -28,9 +28,8 @@ pub struct Proof {
     pub value: Option<Vec<u8>>,
 }
 
-impl Proof {
-    // Default Proof (deadend)
-    pub fn new() -> Self {
+impl Default for Proof {
+    fn default() -> Self {
         Proof {
             proof_type: ProofType::Deadend,
             node_hashes: Vec::<Digest>::new(),
@@ -39,7 +38,9 @@ impl Proof {
             value: None,
         }
     }
+}
 
+impl Proof {
     pub fn depth(&self) -> usize {
         self.node_hashes.len()
     }
@@ -49,7 +50,7 @@ impl Proof {
     }
 
     pub fn is_sane(&self, bits: usize) -> bool {
-        let result = match self.proof_type {
+        match self.proof_type {
             ProofType::Exists => {
                 if self.key.is_some() {
                     false
@@ -79,8 +80,7 @@ impl Proof {
                 }
             }
             ProofType::Deadend => false,
-        };
-        result
+        }
     }
 
     pub fn verify(

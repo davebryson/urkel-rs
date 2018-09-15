@@ -22,15 +22,16 @@ impl Store {
         // This should be path and we find the current index by checking the last file in the path
         let filename = pad_filename(1);
         let result = OpenOptions::new().append(true).create(true).open(filename);
+
         match result {
             Ok(mut f) => {
                 // Get the current pos of eof
                 let size = f.seek(SeekFrom::End(0)).unwrap();
-                return Store {
+                Store {
                     index: 0,
                     file: f,
                     pos: size,
-                };
+                }
             }
             Err(msg) => panic!(msg),
         }

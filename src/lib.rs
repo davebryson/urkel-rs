@@ -83,7 +83,7 @@ impl UrkelTree {
 
     pub fn prove(&self, nkey: Digest) -> Option<Proof> {
         let mut depth = 0;
-        let mut proof = Proof::new();
+        let mut proof = Proof::default();
 
         let keysize = self.keysize;
         let mut current = self.root.as_ref().unwrap();
@@ -160,7 +160,7 @@ impl UrkelTree {
     }
 }
 
-/// Do the insert on the Tree
+/// Insert on the Tree
 fn do_insert(mut root: Node, keysize: usize, nkey: Digest, value: Vec<u8>) -> Node {
     let mut depth = 0;
     let leaf_hash = sha3_value(nkey, value.as_slice());
