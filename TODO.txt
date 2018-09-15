@@ -1,7 +1,7 @@
 
-- Refactor Tree -> Node
-- Move do_insert and write to function outside MerkleTree
-- Rename MerkleTree -> UrkelTree
+- Refactor Tree -> Node (done)
+- Move do_insert function outside MerkleTree (done)
+- Rename MerkleTree -> UrkelTree (done)
 - Make store work
 - Try with RocksDb
 - Abstract "Hasher"

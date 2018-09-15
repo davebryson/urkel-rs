@@ -3,11 +3,11 @@ extern crate urkel_rs;
 use urkel_rs::hashutils::sha3;
 use urkel_rs::proof::ProofType;
 use urkel_rs::store::Store;
-use urkel_rs::tree::MerkleTree;
+use urkel_rs::UrkelTree;
 
 #[test]
 fn should_insert_and_get() {
-    let mut t = MerkleTree::new();
+    let mut t = UrkelTree::default();
     let key1 = sha3(b"name-1");
     let key2 = sha3(b"name-2");
 
@@ -42,13 +42,13 @@ fn should_insert_and_get() {
 
 #[test]
 fn should_handle_get_on_nullnode() {
-    let t = MerkleTree::new();
+    let t = UrkelTree::default();
     assert_eq!(t.get(sha3(b"name-2")), None);
 }
 
 #[test]
 fn should_verify() {
-    let mut t = MerkleTree::new();
+    let mut t = UrkelTree::default();
     let key1 = sha3(b"name-1");
     let key2 = sha3(b"name-2");
     t.insert(key1, Vec::from("value-1"));
@@ -76,7 +76,7 @@ fn santity_check() {
 
 #[test]
 fn should_commit() {
-    let mut t = MerkleTree::new();
+    let mut t = UrkelTree::default();
     for i in 0..5 {
         let k = sha3(format!("name-{}", i).as_bytes());
         let v = Vec::from(format!("value-{}", i));

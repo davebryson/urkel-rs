@@ -1,5 +1,16 @@
 use hashutils::{sha3_internal, sha3_leaf, sha3_value, sha3_zero_hash, Digest};
-use tree::has_bit;
+
+/// Determine which direction to go in the Tree based on the bit in the key
+/// Used in the tree and Proof
+pub fn has_bit(key: &Digest, index: usize) -> bool {
+    let oct = index >> 3;
+    let bit = index & 7;
+    match (key.0[oct] >> (7 - bit)) & 1 {
+        0 => false,
+        1 => true,
+        _ => false,
+    }
+}
 
 #[derive(Eq, PartialEq, Clone)]
 pub enum ProofType {
