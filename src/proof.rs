@@ -1,4 +1,4 @@
-use hashutils::{sha3_internal, sha3_leaf, sha3_value, sha3_zero_hash, Digest};
+use super::hashutils::{sha3_internal, sha3_leaf, sha3_value, sha3_zero_hash, Digest};
 
 /// Determine which direction to go in the Tree based on the bit in the key
 /// Used in the tree and Proof
@@ -52,32 +52,17 @@ impl Proof {
     pub fn is_sane(&self, bits: usize) -> bool {
         match self.proof_type {
             ProofType::Exists => {
-                if self.key.is_some() {
-                    false
-                } else if self.hash.is_some() {
-                    false
-                } else if self.value.is_none() {
-                    false
-                } else if self.value.as_ref().unwrap().len() > 0xffff {
-                    false
-                } else {
-                    true
-                }
+                !(self.key.is_some()
+                    || self.hash.is_some()
+                    || self.value.is_none()
+                    || self.value.as_ref().unwrap().len() > 0xffff)
             }
             ProofType::Collision => {
-                if self.key.is_none() {
-                    false
-                } else if self.hash.is_none() {
-                    false
-                } else if self.value.is_some() {
-                    false
-                } else if self.key.as_ref().unwrap().0.len() != (bits >> 3) {
-                    false
-                } else if self.hash.as_ref().unwrap().0.len() != 32 {
-                    false
-                } else {
-                    true
-                }
+                !(self.key.is_none()
+                    || self.hash.is_none()
+                    || self.value.is_some()
+                    || self.key.as_ref().unwrap().0.len() != (bits >> 3)
+                    || self.hash.as_ref().unwrap().0.len() != 32)
             }
             ProofType::Deadend => false,
         }

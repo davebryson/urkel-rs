@@ -2,7 +2,7 @@ extern crate urkel_rs;
 
 use urkel_rs::hashutils::sha3;
 use urkel_rs::proof::ProofType;
-use urkel_rs::store::Store;
+use urkel_rs::store::{load_or_create_meta, Store};
 use urkel_rs::UrkelTree;
 
 #[test]
@@ -88,9 +88,9 @@ fn should_commit() {
     assert_eq!(t.get(sha3(b"name-1")), Some(Vec::from("value-1")));
 }
 
-fn store_test() {
-    let mut store = Store::open();
-    store.write(String::from("one").as_bytes());
-    store.write(String::from("two").as_bytes());
-    println!("Pos {}", store.position());
+#[test]
+fn meta_file_test() {
+    let r = load_or_create_meta("hello.txt");
+    assert!(r.is_ok());
+    println!("Key: {:?}", r.unwrap());
 }
