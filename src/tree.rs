@@ -234,10 +234,7 @@ impl<'a> UrkelTree<'a> {
     pub fn commit(&mut self) {
         // newroot is a node::hash
         let newroot = self.root.take().map(|t| self.write(t));
-
-        // TODO: Pass the new root to commit for meta writing and stuff...
-        self.store.commit();
-
+        self.store.commit(newroot.as_ref()).unwrap();
         self.root = newroot;
     }
 

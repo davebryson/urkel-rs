@@ -1,65 +1,24 @@
 use super::Result;
+use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
+use hashutils::checksum;
 use nodes::{Node, INTERNAL_NODE_SIZE, LEAF_NODE_SIZE};
 use rand::{thread_rng, Rng};
 use std::fs;
 use std::fs::{File, OpenOptions};
+use std::io::Cursor;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::Path;
 use std::path::PathBuf;
 use std::str::FromStr;
 
 const META_MAGIC: u32 = 0x6d72_6b6c;
-const META_SIZE: u16 = 4 + 2 + 4 + 2 + 4 + 20;
+const META_SIZE: u32 = 36; // 4 + 2 + 4 + 2 + 4 + 20;
 
 pub const KEY_SIZE: usize = 32;
 const MAX_FILE_SIZE: u32 = 0x7fff_f000;
+
 const DEFAULT_BUFFER_SIZE: usize = 1024 * 8;
 const LOCK_FILE_NAME: &'static str = "urkel.lock";
-
-fn get_data_file_path(path: &Path, file_id: u16) -> PathBuf {
-    let file_id = format!("{:010}", file_id);
-    path.join(file_id)
-}
-
-pub fn get_file_handle(path: &Path, write: bool) -> Result<File> {
-    if write {
-        OpenOptions::new().append(true).create(true).open(path)
-    } else {
-        OpenOptions::new().read(true).open(path)
-    }
-}
-
-/// Load or create the meta file that holds the key used for the checksum
-/// in the meta root.
-pub fn random_key() -> [u8; 32] {
-    let mut arr = [0; 32];
-    thread_rng().fill(&mut arr[..]);
-    arr
-}
-
-fn load_or_create_meta_key(dir: &str) -> Result<[u8; 32]> {
-    let path = Path::new(dir).join("meta");
-    if path.exists() {
-        println!("File exists");
-        // Read the key if the meta file exists
-        OpenOptions::new().read(true).open(path).and_then(|mut f| {
-            let mut buffer = [0; 32];
-            f.read_exact(&mut buffer)?;
-            Ok(buffer)
-        })
-    } else {
-        // Create a new key and meta file
-        OpenOptions::new()
-            .create(true)
-            .write(true)
-            .open(path)
-            .and_then(|mut f| {
-                let k = random_key();
-                f.write_all(&k)?;
-                Ok(k)
-            })
-    }
-}
 
 // To add:
 // currentMeta and lastMeta
@@ -70,7 +29,7 @@ pub struct Store {
     dir: PathBuf,
     file: File,
     key: [u8; 32],
-    //state: MetaInfo,
+    state: MetaEntry,
     //last_state: MetaInfo,
 }
 
@@ -108,6 +67,7 @@ impl Store {
             dir: path,
             file: f,
             key: store_key,
+            state: MetaEntry::default(),
         }
     }
 
@@ -202,8 +162,21 @@ impl Store {
     }
 
     // TODO: This needs to take the newroot and write to meta
-    pub fn commit(&mut self) -> Result<()> {
+    pub fn commit(&mut self, root_node: Option<&Node>) -> Result<()> {
         // - Write meta data and buffer to current index file
+        if let Some(n) = root_node {
+            let is_leaf = n.is_leaf();
+            let (index, pos) = n.index_and_position();
+            self.state.root_index = index;
+            self.state.root_pos = pos;
+            self.state.root_leaf = is_leaf;
+            let bits = self.state.encode(self.pos as u32, self.key);
+            match bits {
+                Ok(data) => self.write_bytes(&data),
+                _ => panic!("Failed to write meta"),
+            }
+        };
+
         get_file_handle(&get_data_file_path(&self.dir, self.index), true)
             .and_then(|mut f| f.write_all(&self.buffer))
             .and_then(|_| {
@@ -211,6 +184,93 @@ impl Store {
                 self.pos = 0;
                 Ok(())
             })
+    }
+}
+
+struct StoreWriter {}
+
+struct NodeWriter {}
+
+struct MetaWriter {}
+
+struct MetaEntry {
+    meta_index: u16,
+    meta_pos: u32,
+    root_index: u16,
+    root_pos: u32,
+    root_leaf: bool,
+}
+
+impl Default for MetaEntry {
+    fn default() -> Self {
+        MetaEntry {
+            meta_index: 0,
+            meta_pos: 0,
+            root_index: 0,
+            root_pos: 0,
+            root_leaf: false,
+        }
+    }
+}
+
+impl MetaEntry {
+    /// Encode the metadata for inclusion in the FF
+    fn encode(&self, buffer_pos: u32, meta_key: [u8; 32]) -> Result<Vec<u8>> {
+        let padding = META_SIZE - (buffer_pos % META_SIZE);
+        let mut wtr = vec![0; padding as usize];
+
+        let leaf_flag = if self.root_leaf { 1 } else { 0 };
+        let root_pos = (self.root_pos * 2) + leaf_flag;
+
+        wtr.write_u32::<LittleEndian>(META_MAGIC)?;
+        wtr.write_u16::<LittleEndian>(self.meta_index)?;
+        wtr.write_u32::<LittleEndian>(self.meta_pos)?;
+        wtr.write_u16::<LittleEndian>(self.root_index)?;
+        wtr.write_u32::<LittleEndian>(root_pos)?;
+
+        // Create the checksum
+        // Slice off the contents above
+        let preimage = &wtr.clone()[padding as usize..];
+        // Checksum it
+        let chktotal = checksum(preimage, meta_key);
+        // Copy to the writer
+        wtr.extend_from_slice(&chktotal[0..20]);
+
+        Ok(wtr)
+    }
+
+    fn decode(mut bits: Vec<u8>, meta_key: [u8; 32]) -> Result<MetaEntry> {
+        let preimage = &bits.clone()[0..16];
+        let expected_checksum = &bits.clone()[16..];
+        let mut rdr = Cursor::new(bits);
+
+        let magic = rdr.read_u32::<LittleEndian>()?;
+        if magic != META_MAGIC {
+            panic!("Invalid meta magic number");
+        }
+        assert!(
+            expected_checksum.len() == 20,
+            "meta checksum has wrong size"
+        );
+        let chk = checksum(preimage, meta_key);
+        if chk != expected_checksum {
+            panic!("Invalid metaroot checksum!");
+        }
+
+        let meta_index = rdr.read_u16::<LittleEndian>()?;
+        let meta_pos = rdr.read_u32::<LittleEndian>()?;
+        let root_index = rdr.read_u16::<LittleEndian>()?;
+        let root_pos = rdr.read_u32::<LittleEndian>()?;
+        let is_leaf = root_pos & 1 == 1;
+        let adj_root_pos = root_pos >> 1;
+
+        Ok(MetaEntry {
+            meta_index,
+            meta_pos,
+            root_index,
+            root_pos: adj_root_pos,
+            root_leaf: is_leaf,
+        })
     }
 }
 
@@ -253,20 +313,47 @@ fn find_data_files(path: &Path) -> Result<Vec<StoreFile>> {
     Ok(data_files)
 }
 
-/*#[cfg(test)]
-mod tests {
-    use super::*;
+fn get_data_file_path(path: &Path, file_id: u16) -> PathBuf {
+    let file_id = format!("{:010}", file_id);
+    path.join(file_id)
+}
 
-    #[test]
-    fn list_dirs() {
-        let path = PathBuf::from("./data");
-        let list = find_data_files(&path);
-        assert!(list.is_ok());
-
-        let file = list.unwrap();
-        assert!(file.len() == 4);
-        assert_eq!(file[0].index, 4);
-        assert_eq!(file[0].name, String::from("0000000004"));
+pub fn get_file_handle(path: &Path, write: bool) -> Result<File> {
+    if write {
+        OpenOptions::new().append(true).create(true).open(path)
+    } else {
+        OpenOptions::new().read(true).open(path)
     }
+}
 
-}*/
+/// Load or create the meta file that holds the key used for the checksum
+/// in the meta root.
+pub fn random_key() -> [u8; 32] {
+    let mut arr = [0; 32];
+    thread_rng().fill(&mut arr[..]);
+    arr
+}
+
+fn load_or_create_meta_key(dir: &str) -> Result<[u8; 32]> {
+    let path = Path::new(dir).join("meta");
+    if path.exists() {
+        println!("File exists");
+        // Read the key if the meta file exists
+        OpenOptions::new().read(true).open(path).and_then(|mut f| {
+            let mut buffer = [0; 32];
+            f.read_exact(&mut buffer)?;
+            Ok(buffer)
+        })
+    } else {
+        // Create a new key and meta file
+        OpenOptions::new()
+            .create(true)
+            .write(true)
+            .open(path)
+            .and_then(|mut f| {
+                let k = random_key();
+                f.write_all(&k)?;
+                Ok(k)
+            })
+    }
+}

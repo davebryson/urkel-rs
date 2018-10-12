@@ -80,3 +80,16 @@ pub fn sha3_internal(left: Digest, right: Digest) -> Digest {
     hash.finalize(&mut res);
     Digest(res)
 }
+
+/// Calculate the checksum for the metaroot.
+/// NOTE: this returns a full 32byte hash, but the metaroot uses 20bytes
+/// We chop it in the MetaEntry to simplify borrowing issues.
+pub fn checksum(data: &[u8], meta_key: [u8; 32]) -> [u8; 32] {
+    let mut hash = Keccak::new_sha3_256();
+    let mut res: [u8; 32] = [0; 32];
+
+    hash.update(data);
+    hash.update(&meta_key);
+    hash.finalize(&mut res);
+    res
+}
