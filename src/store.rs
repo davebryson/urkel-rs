@@ -1,10 +1,9 @@
-use codec::{NodeCodec, INTERNAL_NODE_SIZE, LEAF_NODE_SIZE};
-use nodes::Node;
+//use codec::{NodeCodec, INTERNAL_NODE_SIZE, LEAF_NODE_SIZE};
+use nodes::{Node, INTERNAL_NODE_SIZE, LEAF_NODE_SIZE};
 use rand::{thread_rng, Rng};
 use std::fs::{File, OpenOptions};
 use std::io::Error;
 use std::io::{Read, Seek, SeekFrom, Write};
-use std::iter;
 
 const META_MAGIC: u32 = 0x6d72_6b6c;
 const META_SIZE: u16 = 4 + 2 + 4 + 2 + 4 + 20;

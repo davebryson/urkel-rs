@@ -5,6 +5,5 @@ authors = ["David Bryson <dbryson@mitre.org>"]
 
 [dependencies]
 tiny-keccak = "1.4.2"
-blake2-rfc = "0.2.18"
 rand = "0.5.5"
 byteorder = "1.2.6"

@@ -1,5 +1,11 @@
 use super::hashutils::{sha3_internal, Digest};
+use byteorder::{ByteOrder, LittleEndian, ReadBytesExt, WriteBytesExt};
 use std::fmt;
+use std::io::Cursor;
+use store::KEY_SIZE;
+
+pub const INTERNAL_NODE_SIZE: usize = 76; // (2 + 4 + 32) * 2;
+pub const LEAF_NODE_SIZE: usize = 40; // 2 + 4 + 2 + 32;
 
 #[derive(PartialEq, Clone)]
 pub enum Node<'a> {
@@ -43,6 +49,7 @@ impl<'a> Node<'a> {
         }
     }
 
+    // true if index == 0
     pub fn should_save(&self) -> bool {
         match self {
             Node::Internal { index, .. } => {
@@ -63,24 +70,12 @@ impl<'a> Node<'a> {
         }
     }
 
-    pub fn position(&mut self, val: u32) {
+    pub fn index_and_position(&self) -> (u16, u32) {
         match self {
-            Node::Leaf { ref mut pos, .. } => *pos = val * 2 + 1,
-            Node::Internal { ref mut pos, .. } => *pos = val * 2,
-            _ => unimplemented!(),
-        }
-    }
-
-    pub fn get_info(&self) -> (u16, u32, Digest) {
-        match self {
-            Node::Leaf {
-                pos, index, hash, ..
-            } => (*index, *pos, *hash),
-            Node::Internal {
-                pos, index, hash, ..
-            } => (*index, *pos, *hash),
-            Node::Hash { pos, index, hash } => (*index, *pos, *hash),
-            Node::Empty {} => (0, 0, Default::default()),
+            Node::Leaf { pos, index, .. } => (*index, *pos),
+            Node::Internal { pos, index, .. } => (*index, *pos),
+            Node::Hash { pos, index, .. } => (*index, *pos),
+            Node::Empty {} => (0, 0),
         }
     }
 
@@ -96,48 +91,6 @@ impl<'a> Node<'a> {
             }
         }
     }
-
-    // Set the index and position once written to store
-    pub fn set_index_and_pos(&mut self, nindex: u16, npos: u32) {
-        match self {
-            Node::Internal {
-                ref mut index,
-                ref mut pos,
-                ..
-            } => {
-                *index = nindex;
-                *pos = npos * 2;
-            }
-            Node::Leaf {
-                ref mut index,
-                ref mut pos,
-                ..
-            } => {
-                *index = nindex;
-                *pos = npos * 2 + 1;
-                //self.position(pos);
-            }
-            _ => unimplemented!(),
-        }
-    }
-
-    // Convert current node into a HashNode. Can't seem to make From/Into trait work for an enum
-    /*pub fn to_hash_node(&self) -> Self {
-        match self {
-            Node::Leaf { pos, index, .. } => Node::Hash {
-                pos: *pos,
-                index: *index,
-                hash: self.hash(),
-            },
-            Node::Internal { pos, index, .. } => Node::Hash {
-                pos: *pos,
-                index: *index,
-                hash: self.hash(),
-            },
-            Node::Empty {} => Node::empty(),
-            _ => *self,
-        }
-    }*/
 
     // Create an Empty Node
     pub fn empty() -> Self {
@@ -157,6 +110,159 @@ impl<'a> Node<'a> {
             vsize: 0,
         }
     }
+
+    pub fn encode(&self) -> (Vec<u8>, u8) {
+        match self {
+            Node::Internal { left, right, .. } => {
+                let mut wtr = vec![];
+
+                // Do left node
+                let (lindex, lpos) = left.index_and_position();
+                // index of file
+                wtr.write_u16::<LittleEndian>(lindex * 2).unwrap();
+                // pos
+                wtr.write_u32::<LittleEndian>(lpos).unwrap();
+                // hash
+                wtr.extend_from_slice(&(left.hash()).0);
+
+                // Do right node
+                let (rindex, rpos) = right.index_and_position();
+                // index of file
+                wtr.write_u16::<LittleEndian>(rindex).unwrap();
+                // flags
+                wtr.write_u32::<LittleEndian>(rpos).unwrap();
+                // hash
+                wtr.extend_from_slice(&(right.hash()).0);
+
+                (wtr, INTERNAL_NODE_SIZE as u8)
+            }
+            Node::Leaf {
+                vindex,
+                vpos,
+                mut vsize,
+                key,
+                value,
+                ..
+            } => {
+                let mut wtr = vec![];
+                assert!(value.is_some(), "Leaf has no value!");
+
+                value.map(|v| {
+                    vsize = v.len() as u16;
+                });
+
+                // Write Node
+                // leaf value index - NOTE + 1 for leaf detection
+                wtr.write_u16::<LittleEndian>(*vindex * 2 + 1).unwrap();
+                // leaf value position
+                wtr.write_u32::<LittleEndian>(*vpos).unwrap();
+                // value size
+                wtr.write_u16::<LittleEndian>(vsize).unwrap();
+                // append key
+                wtr.extend_from_slice(&key.0);
+
+                (wtr, LEAF_NODE_SIZE as u8)
+            }
+            _ => unimplemented!(),
+        }
+    }
+
+    // Need key size here to make sure we get the right amount of data for the key
+    pub fn decode(mut bits: Vec<u8>, is_leaf: bool) -> Node<'a> {
+        if is_leaf {
+            // Make a leaf
+            assert!(
+                bits.len() == LEAF_NODE_SIZE,
+                "node:decode - Not enough bits for a Leaf"
+            );
+
+            let k = bits.split_off(8);
+
+            let mut rdr = Cursor::new(bits);
+            let mut vindex = rdr.read_u16::<LittleEndian>().unwrap();
+            assert!(vindex & 1 == 1, "Database is corrupt!");
+
+            vindex >>= 1;
+
+            let vpos = rdr.read_u32::<LittleEndian>().unwrap();
+            let vsize = rdr.read_u16::<LittleEndian>().unwrap();
+
+            // Extract the key
+            assert!(k.len() == 32);
+
+            let mut keybits: [u8; 32] = Default::default();
+            keybits.copy_from_slice(&k);
+
+            Node::Leaf {
+                pos: 0,
+                index: 0,
+                hash: Default::default(),
+                key: Digest(keybits),
+                value: None,
+                vindex,
+                vpos,
+                vsize,
+            }
+        } else {
+            // Make an internal
+            assert!(
+                bits.len() == INTERNAL_NODE_SIZE,
+                format!(
+                    "node.decode - Not enough bits {:?} for an Internal",
+                    bits.len()
+                )
+            );
+
+            let mut offset = 0;
+
+            let mut left_index = LittleEndian::read_u16(&bits[offset..]);
+            offset += 2;
+            assert!(left_index & 1 == 0, "Database is corrupt!");
+
+            left_index >>= 1;
+
+            let leftnode = if left_index != 0 {
+                let left_pos = LittleEndian::read_u32(&bits[offset..]);
+                offset += 4;
+                let left_hash = &bits[offset..offset + KEY_SIZE];
+                offset += KEY_SIZE;
+                // add hashnode to left
+                Node::Hash {
+                    pos: left_pos,
+                    index: left_index,
+                    hash: Digest::from(left_hash),
+                }
+            } else {
+                offset += 4 + KEY_SIZE;
+                Node::empty()
+            };
+
+            let right_index = LittleEndian::read_u16(&bits[offset..]);
+            offset += 2;
+
+            let rightnode = if right_index != 0 {
+                let right_pos = LittleEndian::read_u32(&bits[offset..]);
+                offset += 4;
+                let right_hash = &bits[offset..offset + KEY_SIZE];
+
+                Node::Hash {
+                    pos: right_pos,
+                    index: right_index,
+                    hash: Digest::from(right_hash),
+                }
+            } else {
+                Node::empty()
+            };
+
+            Node::Internal {
+                pos: 0,
+                index: 0,
+                hash: Default::default(),
+                left: Box::new(leftnode),
+                right: Box::new(rightnode),
+            }
+        }
+    }
 }
 
 impl<'a> fmt::Debug for Node<'a> {
@@ -170,4 +276,77 @@ impl<'a> fmt::Debug for Node<'a> {
             Node::Hash { hash, .. } => write!(f, "Node::Hash({:?})", hash.0),
         }
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use hashutils::sha3;
+
+    #[test]
+    fn leaf_encode_decode() {
+        let lf = Node::Leaf {
+            key: sha3(b"dave"),
+            value: Some(&[1, 2, 3, 4]),
+            pos: 0,
+            index: 1,
+            hash: Default::default(),
+            vindex: 1,
+            vpos: 20,
+            vsize: 0,
+        };
+
+        let (encoded_leaf, _size) = lf.encode();
+        assert!(encoded_leaf.len() == LEAF_NODE_SIZE);
+
+        let back = Node::decode(encoded_leaf, true);
+        assert!(back.is_leaf());
+
+        assert!(match back {
+            Node::Leaf {
+                key,
+                vpos,
+                vsize,
+                vindex,
+                ..
+            } => {
+                assert!(key == sha3(b"dave"));
+                assert!(vindex == 1);
+                assert!(vpos == 20);
+                assert!(vsize == 4);
+                true
+            }
+            _ => false,
+        })
+    }
+
+    #[test]
+    fn internal_encode_decode() {
+        let h: &[u8] = &[1u8; 32];
+        let inner_leaf = Node::Leaf {
+            key: sha3(b"dave"),
+            value: Some(&[1, 2, 3, 4]),
+            pos: 0,
+            index: 1,
+            hash: Digest::from(h),
+            vindex: 1,
+            vpos: 20,
+            vsize: 0,
+        };
+
+        let inner = Node::Internal {
+            left: Box::new(Node::empty()),
+            right: Box::new(inner_leaf),
+            pos: 20,
+            index: 1,
+            hash: Default::default(),
+        };
+
+        let (encoded_int, _size) = inner.encode();
+        assert!(encoded_int.len() == INTERNAL_NODE_SIZE);
+
+        let back = Node::decode(encoded_int, false);
+        assert!(!back.is_leaf());
+    }
+
 }

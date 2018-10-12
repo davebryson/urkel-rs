@@ -4,8 +4,6 @@ use tiny_keccak::Keccak;
 const LEAF_PREFIX: u8 = 0x00u8;
 const INTERNAL_PREFIX: u8 = 0x01u8;
 
-// TODO: This all needs to move into traits
-
 #[derive(Eq, PartialEq, PartialOrd, Debug, Clone, Copy)]
 pub struct Digest(pub [u8; 32]);
 
