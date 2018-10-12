@@ -1,4 +1,5 @@
 use super::hashutils::{sha3_internal, Digest};
+use super::Result;
 use byteorder::{ByteOrder, LittleEndian, ReadBytesExt, WriteBytesExt};
 use std::fmt;
 use std::io::Cursor;
@@ -111,30 +112,29 @@ impl<'a> Node<'a> {
         }
     }
 
-    pub fn encode(&self) -> (Vec<u8>, u8) {
+    pub fn encode(&self) -> Result<Vec<u8>> {
         match self {
             Node::Internal { left, right, .. } => {
                 let mut wtr = vec![];
-
                 // Do left node
                 let (lindex, lpos) = left.index_and_position();
                 // index of file
-                wtr.write_u16::<LittleEndian>(lindex * 2).unwrap();
+                wtr.write_u16::<LittleEndian>(lindex * 2)?;
                 // pos
-                wtr.write_u32::<LittleEndian>(lpos).unwrap();
+                wtr.write_u32::<LittleEndian>(lpos)?;
                 // hash
                 wtr.extend_from_slice(&(left.hash()).0);
 
                 // Do right node
                 let (rindex, rpos) = right.index_and_position();
                 // index of file
-                wtr.write_u16::<LittleEndian>(rindex).unwrap();
+                wtr.write_u16::<LittleEndian>(rindex)?;
                 // flags
-                wtr.write_u32::<LittleEndian>(rpos).unwrap();
+                wtr.write_u32::<LittleEndian>(rpos)?;
                 // hash
                 wtr.extend_from_slice(&(right.hash()).0);
 
-                (wtr, INTERNAL_NODE_SIZE as u8)
+                Ok(wtr)
             }
             Node::Leaf {
                 vindex,
@@ -153,22 +153,22 @@ impl<'a> Node<'a> {
 
                 // Write Node
                 // leaf value index - NOTE + 1 for leaf detection
-                wtr.write_u16::<LittleEndian>(*vindex * 2 + 1).unwrap();
+                wtr.write_u16::<LittleEndian>(*vindex * 2 + 1)?;
                 // leaf value position
-                wtr.write_u32::<LittleEndian>(*vpos).unwrap();
+                wtr.write_u32::<LittleEndian>(*vpos)?;
                 // value size
-                wtr.write_u16::<LittleEndian>(vsize).unwrap();
+                wtr.write_u16::<LittleEndian>(vsize)?;
                 // append key
                 wtr.extend_from_slice(&key.0);
 
-                (wtr, LEAF_NODE_SIZE as u8)
+                Ok(wtr)
             }
             _ => unimplemented!(),
         }
     }
 
     // Need key size here to make sure we get the right amount of data for the key
-    pub fn decode(mut bits: Vec<u8>, is_leaf: bool) -> Node<'a> {
+    pub fn decode(mut bits: Vec<u8>, is_leaf: bool) -> Result<Node<'a>> {
         if is_leaf {
             // Make a leaf
             assert!(
@@ -179,13 +179,13 @@ impl<'a> Node<'a> {
             let k = bits.split_off(8);
 
             let mut rdr = Cursor::new(bits);
-            let mut vindex = rdr.read_u16::<LittleEndian>().unwrap();
+            let mut vindex = rdr.read_u16::<LittleEndian>()?;
             assert!(vindex & 1 == 1, "Database is corrupt!");
 
             vindex >>= 1;
 
-            let vpos = rdr.read_u32::<LittleEndian>().unwrap();
-            let vsize = rdr.read_u16::<LittleEndian>().unwrap();
+            let vpos = rdr.read_u32::<LittleEndian>()?;
+            let vsize = rdr.read_u16::<LittleEndian>()?;
 
             // Extract the key
             assert!(k.len() == 32);
@@ -193,7 +193,7 @@ impl<'a> Node<'a> {
             let mut keybits: [u8; 32] = Default::default();
             keybits.copy_from_slice(&k);
 
-            Node::Leaf {
+            Ok(Node::Leaf {
                 pos: 0,
                 index: 0,
                 hash: Default::default(),
@@ -202,7 +202,7 @@ impl<'a> Node<'a> {
                 vindex,
                 vpos,
                 vsize,
-            }
+            })
         } else {
             // Make an internal
             assert!(
@@ -254,13 +254,13 @@ impl<'a> Node<'a> {
                 Node::empty()
             };
 
-            Node::Internal {
+            Ok(Node::Internal {
                 pos: 0,
                 index: 0,
                 hash: Default::default(),
                 left: Box::new(leftnode),
                 right: Box::new(rightnode),
-            }
+            })
         }
     }
 }
@@ -296,13 +296,12 @@ mod tests {
             vsize: 0,
         };
 
-        let (encoded_leaf, _size) = lf.encode();
-        assert!(encoded_leaf.len() == LEAF_NODE_SIZE);
+        let encoded_leaf = lf.encode();
+        assert!(encoded_leaf.is_ok());
 
-        let back = Node::decode(encoded_leaf, true);
-        assert!(back.is_leaf());
-
-        assert!(match back {
+        let back = Node::decode(encoded_leaf.unwrap(), true);
+        assert!(back.is_ok());
+        assert!(match back.unwrap() {
             Node::Leaf {
                 key,
                 vpos,
@@ -342,11 +341,10 @@ mod tests {
             hash: Default::default(),
         };
 
-        let (encoded_int, _size) = inner.encode();
-        assert!(encoded_int.len() == INTERNAL_NODE_SIZE);
-
-        let back = Node::decode(encoded_int, false);
-        assert!(!back.is_leaf());
+        let encoded_int = inner.encode();
+        assert!(encoded_int.is_ok());
+        let back = Node::decode(encoded_int.unwrap(), false);
+        assert!(!back.unwrap().is_leaf());
     }
 
 }

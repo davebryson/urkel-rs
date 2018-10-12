@@ -4,15 +4,18 @@ use tiny_keccak::Keccak;
 const LEAF_PREFIX: u8 = 0x00u8;
 const INTERNAL_PREFIX: u8 = 0x01u8;
 
+/// Container for a Hash
 #[derive(Eq, PartialEq, PartialOrd, Debug, Clone, Copy)]
 pub struct Digest(pub [u8; 32]);
 
+/// Default returns a zero hash - used as a sentinal marker
 impl Default for Digest {
     fn default() -> Digest {
         Digest([0; 32])
     }
 }
 
+/// Convert from &[u8] to Digest
 impl<'a> From<&'a [u8]> for Digest {
     fn from(val: &'a [u8]) -> Self {
         let mut a = [0u8; 32];
@@ -21,6 +24,7 @@ impl<'a> From<&'a [u8]> for Digest {
     }
 }
 
+/// Display as lowercase hex string
 impl fmt::LowerHex for Digest {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "0x")?;
@@ -31,6 +35,7 @@ impl fmt::LowerHex for Digest {
     }
 }
 
+/// Hash of the content
 pub fn sha3(data: &[u8]) -> Digest {
     let mut hash = Keccak::new_sha3_256();
     let mut res: [u8; 32] = [0; 32];
@@ -39,6 +44,7 @@ pub fn sha3(data: &[u8]) -> Digest {
     Digest(res)
 }
 
+/// Hash a leaf's key/values
 pub fn sha3_leaf(key: Digest, value: &[u8]) -> Digest {
     let mut hash = Keccak::new_sha3_256();
     let mut res: [u8; 32] = [0; 32];
@@ -50,6 +56,7 @@ pub fn sha3_leaf(key: Digest, value: &[u8]) -> Digest {
     Digest(res)
 }
 
+/// Hash a leaf's k/v into the node's representation
 pub fn sha3_value(key: Digest, value: &[u8]) -> Digest {
     let mut hash = Keccak::new_sha3_256();
     let mut res: [u8; 32] = [0; 32];
@@ -62,6 +69,7 @@ pub fn sha3_value(key: Digest, value: &[u8]) -> Digest {
     Digest(res)
 }
 
+/// Hash an internal node
 pub fn sha3_internal(left: Digest, right: Digest) -> Digest {
     let mut hash = Keccak::new_sha3_256();
     let mut res: [u8; 32] = [0; 32];
@@ -71,8 +79,4 @@ pub fn sha3_internal(left: Digest, right: Digest) -> Digest {
     hash.update(&right.0);
     hash.finalize(&mut res);
     Digest(res)
-}
-
-pub fn sha3_zero_hash() -> Digest {
-    Digest([0; 32])
 }

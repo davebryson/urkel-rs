@@ -1,3 +1,4 @@
+use super::Error;
 use hashutils::{sha3, sha3_value, Digest};
 use nodes::Node;
 use proof::{has_bit, Proof, ProofType};
@@ -40,7 +41,10 @@ impl<'a> UrkelTree<'a> {
                 Node::Empty {} => break,
                 Node::Hash { index, pos, .. } => {
                     // Reach back to storage and convert the hash node to a leaf or internal
-                    root = self.store.resolve(index, pos, root.is_leaf());
+                    root = self
+                        .store
+                        .resolve(index, pos, root.is_leaf())
+                        .expect("Failed to resolve Hashnode");
                 }
                 Node::Leaf {
                     key, value, hash, ..
@@ -141,8 +145,10 @@ impl<'a> UrkelTree<'a> {
                         return value.and_then(|v| Some(Vec::from(v)));
                     }
 
-                    // TODO: This needs refactored
-                    return Some(self.store.retrieve(vindex, vpos, vsize));
+                    match self.store.retrieve(vindex, vpos, vsize) {
+                        Ok(v) => return Some(v),
+                        _ => return None,
+                    }
                 }
                 Node::Internal { left, right, .. } => {
                     if has_bit(&nkey, depth) {
@@ -154,7 +160,10 @@ impl<'a> UrkelTree<'a> {
                 }
                 Node::Hash { index, pos, .. } => {
                     let is_leaf = current.is_leaf();
-                    current = self.store.resolve(index, pos, is_leaf);
+                    current = self
+                        .store
+                        .resolve(index, pos, is_leaf)
+                        .expect("Failed to resolve Hashnode");
                 }
                 _ => return None,
             }
@@ -173,7 +182,10 @@ impl<'a> UrkelTree<'a> {
                 Node::Empty {} => break,
                 Node::Hash { index, pos, .. } => {
                     let is_leaf = current.is_leaf();
-                    current = self.store.resolve(index, pos, is_leaf);
+                    current = self
+                        .store
+                        .resolve(index, pos, is_leaf)
+                        .expect("Failed to resolve Hashnode");
                 }
                 Node::Internal { left, right, .. } => {
                     if depth == self.keysize {
@@ -197,7 +209,10 @@ impl<'a> UrkelTree<'a> {
                     vsize,
                     ..
                 } => {
-                    let val = self.store.retrieve(vindex, vpos, vsize);
+                    let val = self
+                        .store
+                        .retrieve(vindex, vpos, vsize)
+                        .expect("Missing leaf value");
 
                     if nkey == key {
                         proof.proof_type = ProofType::Exists;
@@ -317,6 +332,8 @@ mod tests {
         t.insert(key2, b"value-2");
 
         t.commit();
+
+        assert!(t.get_root() != Digest::default());
 
         assert_eq!(t.get(key1), Some(Vec::from("value-1")));
         assert_eq!(t.get(key2), Some(Vec::from("value-2")));

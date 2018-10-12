@@ -12,3 +12,9 @@ mod nodes;
 pub mod proof;
 mod store;
 pub mod tree;
+
+use std::io::Error;
+use std::result;
+
+/// Result type used across project
+pub type Result<T> = result::Result<T, Error>;

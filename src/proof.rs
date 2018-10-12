@@ -1,6 +1,6 @@
-use super::hashutils::{sha3_internal, sha3_leaf, sha3_value, sha3_zero_hash, Digest};
+use super::hashutils::{sha3_internal, sha3_leaf, sha3_value, Digest};
 
-/// Determine which direction to go in the Tree based on the bit in the key
+/// Determine which direction to go in the Tree based on the bit value in the key.
 /// Used in tree and proof
 pub fn has_bit(key: &Digest, index: usize) -> bool {
     let oct = index >> 3;
@@ -25,7 +25,6 @@ pub struct Proof {
     node_hashes: Vec<Digest>,
     pub key: Option<Digest>,
     pub hash: Option<Digest>,
-    //pub value: Option<&'a [u8]>,
     pub value: Option<Vec<u8>>,
 }
 
@@ -80,7 +79,7 @@ impl Proof {
         }
 
         let leaf = match self.proof_type {
-            ProofType::Deadend => sha3_zero_hash(), /*sha3(&[0; 32])*/
+            ProofType::Deadend => Digest::default(),
             ProofType::Collision => {
                 if self.key == Some(key) {
                     return Err("Same Key");
