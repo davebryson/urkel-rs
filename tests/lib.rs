@@ -2,9 +2,8 @@ extern crate urkel_rs;
 
 use urkel_rs::hashutils::sha3;
 use urkel_rs::proof::ProofType;
-use urkel_rs::store::{load_or_create_meta, Store};
 use urkel_rs::UrkelTree;
-
+/*
 #[test]
 fn should_insert_and_get() {
     let mut t = UrkelTree::default();
@@ -86,11 +85,11 @@ fn should_commit() {
     t.commit();
 
     assert_eq!(t.get(sha3(b"name-1")), Some(Vec::from("value-1")));
-}
+}*/
 
-#[test]
+/*#[test]
 fn meta_file_test() {
     let r = load_or_create_meta("hello.txt");
     assert!(r.is_ok());
     println!("Key: {:?}", r.unwrap());
-}
+}*/

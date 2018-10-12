@@ -2,65 +2,65 @@ extern crate byteorder;
 extern crate rand;
 extern crate tiny_keccak;
 
+pub mod codec;
 pub mod hashutils;
-pub mod memorydb;
 pub mod nodes;
 pub mod proof;
 pub mod store;
 
 use hashutils::{sha3, sha3_value, Digest};
-use memorydb::MemoryDb;
-use nodes::{Node, NodeStore};
+use nodes::Node;
 use proof::{has_bit, Proof, ProofType};
+use store::Store;
 
 /// Base-2 Merkle Tree
-pub struct UrkelTree {
+pub struct UrkelTree<'a> {
     /// Root Node
-    root: Option<Node>,
+    root: Option<Node<'a>>,
     /// Size in bits of the digest
     keysize: usize,
-    /// Persistent Store
-    store: MemoryDb,
+    store: Store,
 }
 
-impl Default for UrkelTree {
-    fn default() -> Self {
+impl<'a> UrkelTree<'a> {
+    pub fn new() -> Self {
         UrkelTree {
             root: Some(Node::empty()),
             keysize: 256,
             store: Default::default(),
         }
     }
-}
-
-impl UrkelTree {
     pub fn get_root(&self) -> Digest {
+        // TODO: Clean this up
         let r = self.root.as_ref().expect("Node root was None");
         r.hash()
     }
 
-    pub fn insert(&mut self, nkey: Digest, value: Vec<u8>) {
-        //let newroot = self
-        //    .root
-        //    .take()
-        //    .map(|t| do_insert(t, self.keysize, nkey, value));
-
-        let mut root = self.root.take().unwrap();
+    pub fn insert(&mut self, nkey: Digest, value: &'a [u8]) {
+        //et root = self.root.take().unwrap();
+        //self.root = do_insert(&self.store, root, nkey, value, self.keysize);
+        //self.root = do_insert(&mut self.store, root, nkey, value, self.keysize);
 
         let mut depth = 0;
         let mut to_hash = Vec::<Node>::new();
-        let leaf_hash = sha3_value(nkey, value.as_slice());
+        let leaf_hash = sha3_value(nkey, value);
+
+        let mut root = self.root.take().unwrap();
 
         loop {
             match root {
                 Node::Empty {} => break,
-                Node::Hash { .. } => { /*should pull from store*/ }
+                Node::Hash { index, pos, .. } => {
+                    root = self.store.resolve(index, pos, root.is_leaf());
+                }
                 Node::Leaf {
-                    key, value, params, ..
+                    key, value, hash, ..
                 } => {
                     if nkey == key {
-                        if leaf_hash == params.data {
-                            Node::leaf(key, value, params);
+                        if leaf_hash == hash {
+                            self.root = Some(root);
+                            //return Some(root);
+                            return;
                         }
                         break;
                     }
@@ -70,14 +70,14 @@ impl UrkelTree {
                         depth += 1;
                     }
 
-                    to_hash.push(Node::leaf(key, value, params));
+                    to_hash.push(Node::leaf(key, value));
 
                     depth += 1;
                     break;
                 }
                 Node::Internal { left, right, .. } => {
                     if depth == self.keysize {
-                        panic!(format!("Missing node at depth {}", depth));
+                        panic!("Missing node at depth {}", depth);
                     }
 
                     if has_bit(&nkey, depth) {
@@ -92,15 +92,17 @@ impl UrkelTree {
             }
         }
 
-        let params = NodeStore {
-            data: leaf_hash,
-            index: 0,
-            pos: 0,
-            is_leaf: true,
-        };
-
         // Start with a leaf of the new values
-        let mut new_root = Node::leaf(nkey, value, params);
+        let mut new_root = Node::Leaf {
+            pos: 0,
+            index: 0,
+            hash: leaf_hash,
+            key: nkey,
+            value: Some(value),
+            vindex: 0,
+            vpos: 0,
+            vsize: 0,
+        };
 
         // Walk the tree bottom up to form the new root
         for n in to_hash.into_iter().rev() {
@@ -109,54 +111,101 @@ impl UrkelTree {
                 new_root = Node::Internal {
                     left: Box::new(n),
                     right: Box::new(new_root),
-                    params: Default::default(),
+                    index: 0,
+                    pos: 0,
+                    hash: Default::default(),
                 };
             } else {
                 new_root = Node::Internal {
                     left: Box::new(new_root),
                     right: Box::new(n),
-                    params: Default::default(),
+                    index: 0,
+                    pos: 0,
+                    hash: Default::default(),
                 };
             }
         }
+
         self.root = Some(new_root);
+        //Some(new_root)
     }
 
-    pub fn get(&self, nkey: Digest) -> Option<Vec<u8>> {
-        let mut depth = 0;
-        let mut current = self.root.as_ref().unwrap();
+    pub fn do_get(&mut self, mut node: &Node, nkey: Digest, mut depth: usize) -> Option<Vec<u8>> {
         loop {
-            match current {
+            match node {
                 Node::Leaf {
-                    key, value, params, ..
+                    key,
+                    value,
+                    vindex,
+                    vpos,
+                    vsize,
+                    ..
                 } => {
                     if nkey != *key {
                         return None;
                     }
-                    // TODO: if the current node has a value return it
-                    // else pull from store
-                    if !value.is_empty() {
-                        return Some(value.to_vec());
+
+                    if value.is_some() {
+                        return value.and_then(|v| Some(Vec::from(v)));
                     }
 
-                    // TODO: Need to check storage here
-
-                    return None;
+                    // TODO: This needs refactored
+                    return Some(self.store.retrieve(*vindex, *vpos, *vsize));
                 }
                 Node::Internal { left, right, .. } => {
                     if has_bit(&nkey, depth) {
-                        current = &*right;
+                        node = &*right;
                     } else {
-                        current = &*left;
+                        node = &*left;
                     }
                     depth += 1;
                 }
-                Node::Hash { params } => {
-                    if let Some(x) = self.store.get(params.data) {
-                        current = x
-                    } else {
+                Node::Hash { index, pos, .. } => {
+                    let n = self.store.resolve(*index, *pos, node.is_leaf());
+                    self.do_get(&n, nkey, depth);
+                }
+                _ => return None,
+            }
+        }
+    }
+
+    pub fn get(&mut self, nkey: Digest) -> Option<Vec<u8>> {
+        let mut depth = 0;
+        let mut current = self.root.clone().unwrap();
+        //let mut current = self.root.as_ref().unwrap();
+        loop {
+            match current {
+                Node::Leaf {
+                    key,
+                    value,
+                    vindex,
+                    vpos,
+                    vsize,
+                    ..
+                } => {
+                    if nkey != key {
                         return None;
                     }
+
+                    println!("GET: Val: {:?} POS: {:}", value, vpos);
+                    if value.is_some() {
+                        return value.and_then(|v| Some(Vec::from(v)));
+                    }
+
+                    // TODO: This needs refactored
+                    return Some(self.store.retrieve(vindex, vpos, vsize));
+                }
+                Node::Internal { left, right, .. } => {
+                    if has_bit(&nkey, depth) {
+                        current = *right;
+                    } else {
+                        current = *left;
+                    }
+                    depth += 1;
+                }
+                Node::Hash { index, pos, .. } => {
+                    let is_leaf = current.is_leaf();
+                    current = self.store.resolve(index, pos, is_leaf);
                 }
                 _ => return None,
             }
@@ -168,34 +217,41 @@ impl UrkelTree {
         let mut proof = Proof::default();
 
         let keysize = self.keysize;
-        let mut current = self.root.as_ref().unwrap();
+        //let mut current = self.root.as_ref().unwrap();
+        let mut current = self.root.clone().unwrap();
         loop {
             match current {
                 Node::Empty {} => break,
-                Node::Hash { .. } => { /* TODO: should pull from store */ }
+                Node::Hash { .. } => {
+                    //if let Some(n) = self.store.get(params.data) {
+                    //    current = n;
+                    //}
+                }
                 Node::Internal { left, right, .. } => {
                     if depth == keysize {
-                        panic!(format!("Missing node at depth {}", depth));
+                        panic!("Missing node at depth {}", depth);
                     }
 
                     if has_bit(&nkey, depth) {
                         proof.push(left.hash());
-                        current = &*right;
+                        //current = &*right;
+                        current = *right;
                     } else {
                         proof.push(right.hash());
-                        current = &*left
+                        //current = &*left
+                        current = *left;
                     }
 
                     depth += 1;
                 }
                 Node::Leaf { key, value, .. } => {
-                    if nkey == *key {
+                    if nkey == key {
                         proof.proof_type = ProofType::Exists;
-                        proof.value = Some(value.to_vec());
+                        proof.value = value;
                     } else {
                         proof.proof_type = ProofType::Collision;
-                        proof.key = Some(*key);
-                        proof.hash = Some(sha3(value.as_slice()));
+                        proof.key = Some(key);
+                        proof.hash = Some(value.map(|v| sha3(v)).unwrap());
                     }
                     break;
                 }
@@ -207,117 +263,122 @@ impl UrkelTree {
 
     // Commit subtree to storage and set a new Hashnode root.
     pub fn commit(&mut self) {
+        // newroot is a node::hash
         let newroot = self.root.take().map(|t| self.write(t));
-        // store.commit(newroot);
+        println!("Got the new root: {:?}", newroot);
+        self.store.commit();
+        // Write to meta
+        //self.store.commit(&newroot);
         self.root = newroot;
     }
 
-    fn write(&mut self, n: Node) -> Node {
+    fn write(&mut self, mut n: Node<'a>) -> Node<'a> {
         match n {
             Node::Empty {} => Node::empty(),
-            Node::Internal { left, right, .. } => {
-                // Don't necessarily like the recursive call
-                // but not sure of a better way to do it...
+            Node::Internal {
+                pos,
+                index,
+                hash,
+                left,
+                right,
+            } => {
+                // Go left recursively
                 let left_result = self.write(*left);
+                // ...then right
                 let right_result = self.write(*right);
 
-                let mut node = Node::Internal {
+                // Now construct a new entry
+                let mut tempnode = Node::Internal {
+                    pos,
+                    index,
+                    hash,
                     left: Box::new(left_result),
                     right: Box::new(right_result),
-                    params: Default::default(),
                 };
 
-                println!("Store node {:x}", node.hash());
-                // store.writeNode(node)
-                self.store.put(node)
+                // Calc hash for the hashnode
+                let hashed = tempnode.hash();
+
+                // Only store if we haven't already
+                if index == 0 {
+                    self.store.write_node(&mut tempnode);
+                }
+
+                let (newindex, newpos, _) = tempnode.get_info();
+                println!("index: {:?} pos: {:?}", newindex, newpos);
+
+                // Now it *should* be stored
+                assert!(!tempnode.should_save(), "Didn't persist the node");
+
+                //let (newindex, newpos, _) = tempnode.get_info();
+
+                Node::Hash {
+                    pos: newpos,
+                    index: newindex,
+                    hash: hashed,
+                }
             }
-            Node::Leaf {
-                key, value, params, ..
-            } => {
-                // Store node
-                //println!("Store leaf {:x}", n.hash());
-                let l = Node::leaf(key, value.to_vec(), params);
-                // store.writeNode(node)
-                self.store.put(l)
+            Node::Leaf { .. } => {
+                println!("Write leaf");
+                self.store.write_value(&mut n);
+                self.store.write_node(&mut n);
+                //n.set_index_and_pos(i, p);
+
+                assert!(!n.should_save(), "Didn't persist the node");
+
+                let (newindex, newpos, _) = n.get_info();
+                let hashed = n.hash();
+                Node::Hash {
+                    pos: newpos,
+                    index: newindex,
+                    hash: hashed,
+                }
             }
-            Node::Hash { params } => Node::Hash { params },
+            Node::Hash { .. } => {
+                assert!(!n.should_save());
+                n
+            }
         }
     }
 }
 
-/*
-fn do_insert(mut root: Node, keysize: usize, nkey: Digest, value: Vec<u8>) -> Node {
-    let mut depth = 0;
-    let leaf_hash = sha3_value(nkey, value.as_slice());
-    let mut to_hash = Vec::<Node>::new();
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-    loop {
-        match root {
-            Node::Empty {} => break,
-            Node::Hash { .. } => { /*should pull from store*/ }
-            Node::Leaf {
-                key, value, params, ..
-            } => {
-                if nkey == key {
-                    if leaf_hash == params.data {
-                        return Node::leaf(key, value, params);
-                    }
-                    break;
-                }
+    #[test]
+    fn tree_basics() {
+        let st = Store::default();
+        let mut t = UrkelTree::new();
+        let key1 = sha3(b"name-1");
+        let key2 = sha3(b"name-2");
 
-                while has_bit(&nkey, depth) == has_bit(&key, depth) {
-                    to_hash.push(Node::Empty {});
-                    depth += 1;
-                }
+        t.insert(key1, b"value-1");
+        t.insert(key2, b"value-2");
+        t.commit();
 
-                to_hash.push(Node::leaf(key, value, params));
+        println!("Here");
 
-                depth += 1;
-                break;
-            }
-            Node::Internal { left, right, .. } => {
-                if depth == keysize {
-                    panic!(format!("Missing node at depth {}", depth));
-                }
+        assert_eq!(t.get(key1), Some(Vec::from("value-1")));
+        assert_eq!(t.get(key2), Some(Vec::from("value-2")));
+        /*println!("Here2");
 
-                if has_bit(&nkey, depth) {
-                    to_hash.push(*left);
-                    root = *right;
-                } else {
-                    to_hash.push(*right);
-                    root = *left
-                }
-                depth += 1;
-            }
+        // Test good proof
+        let prf = t.prove(key2);
+        println!("Here3");
+        assert!(prf.is_some());
+        if let Some(pt) = prf {
+            assert!(pt.proof_type == ProofType::Exists);
+            assert!(pt.value == Some(b"value-2"));
         }
+
+        // Test collision
+        let noproof = t.prove(sha3(b"doesn't exist"));
+        assert!(noproof.is_some());
+        if let Some(np) = noproof {
+            assert!(np.proof_type == ProofType::Collision);
+            assert!(np.key.is_some());
+            assert!(np.hash.is_some());
+        }*/
     }
-
-    let params = NodeStore {
-        data: leaf_hash,
-        index: 0,
-        flags: 0,
-    };
-
-    // Start with a leaf of the new values
-    let mut new_root = Node::leaf(nkey, value, params);
-
-    // Walk the tree bottom up to form the new root
-    for n in to_hash.into_iter().rev() {
-        depth -= 1;
-        if has_bit(&nkey, depth) {
-            new_root = Node::Internal {
-                left: Box::new(n),
-                right: Box::new(new_root),
-                params: Default::default(),
-            };
-        } else {
-            new_root = Node::Internal {
-                left: Box::new(new_root),
-                right: Box::new(n),
-                params: Default::default(),
-            };
-        }
-    }
-
-    new_root
-}*/
+}

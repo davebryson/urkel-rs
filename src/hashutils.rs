@@ -4,12 +4,22 @@ use tiny_keccak::Keccak;
 const LEAF_PREFIX: u8 = 0x00u8;
 const INTERNAL_PREFIX: u8 = 0x01u8;
 
+// TODO: This all needs to move into traits
+
 #[derive(Eq, PartialEq, PartialOrd, Debug, Clone, Copy)]
 pub struct Digest(pub [u8; 32]);
 
 impl Default for Digest {
     fn default() -> Digest {
         Digest([0; 32])
+    }
+}
+
+impl<'a> From<&'a [u8]> for Digest {
+    fn from(val: &'a [u8]) -> Self {
+        let mut a = [0u8; 32];
+        a.clone_from_slice(val);
+        Digest(a)
     }
 }
 

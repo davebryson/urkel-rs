@@ -1,77 +1,94 @@
-use super::hashutils::{sha3_internal, sha3_zero_hash, Digest};
+use super::hashutils::{sha3_internal, Digest};
 use std::fmt;
 
-use byteorder::{LittleEndian, WriteBytesExt};
-
-/// Store the hash of the node along with file store information
-#[derive(Clone, Copy)]
-pub struct NodeStore {
-    pub data: Digest,
-    pub index: usize,
-    pub is_leaf: bool,
-    pub pos: usize,
-}
-
-impl Default for NodeStore {
-    fn default() -> Self {
-        NodeStore {
-            data: Default::default(),
-            index: 0,
-            is_leaf: false,
-            pos: 0,
-        }
-    }
-}
-
-impl NodeStore {
-    pub fn set_position(&mut self, p: usize) {
-        if self.is_leaf {
-            self.pos = p * 2 + 1
-        } else {
-            self.pos = p * 2
-        }
-    }
-
-    pub fn set_index(&mut self, value: usize) {
-        self.index = value;
-    }
-
-    pub fn get_raw_position(&self) -> usize {
-        self.pos >> 1
-    }
-
-    pub fn get_encoded_position(&self) -> u32 {
-        self.pos as u32
-    }
-}
-
-pub enum Node {
+#[derive(PartialEq, Clone)]
+pub enum Node<'a> {
     Empty {},
     Hash {
-        params: NodeStore,
+        pos: u32,
+        index: u16,
+        hash: Digest,
     },
     Leaf {
+        pos: u32,
+        index: u16,
+        hash: Digest,
         key: Digest,
-        value: Vec<u8>,
-        vindex: usize,
-        vpos: usize,
-        vsize: usize,
-        params: NodeStore,
+        value: Option<&'a [u8]>,
+        vindex: u16,
+        vpos: u32,
+        vsize: u16,
     },
     Internal {
-        left: Box<Node>,
-        right: Box<Node>,
-        params: NodeStore,
+        pos: u32,
+        index: u16,
+        hash: Digest,
+        left: Box<Node<'a>>,
+        right: Box<Node<'a>>,
     },
 }
 
-impl Node {
-    // Generate hash for specific node
+impl<'a> Node<'a> {
+    // Is the node a Leaf?
+    pub fn is_leaf(&self) -> bool {
+        match self {
+            Node::Leaf { .. } => true,
+            Node::Hash { pos, .. } => {
+                if pos & 1 == 1 {
+                    return true;
+                }
+                false
+            }
+            _ => false,
+        }
+    }
+
+    pub fn should_save(&self) -> bool {
+        match self {
+            Node::Internal { index, .. } => {
+                if *index == 0 {
+                    return true;
+                }
+                false
+            }
+            _ => false,
+        }
+    }
+
+    pub fn is_leaf_or_internal(&self) -> bool {
+        match self {
+            Node::Leaf { .. } => true,
+            Node::Internal { .. } => true,
+            _ => false,
+        }
+    }
+
+    pub fn position(&mut self, val: u32) {
+        match self {
+            Node::Leaf { ref mut pos, .. } => *pos = val * 2 + 1,
+            Node::Internal { ref mut pos, .. } => *pos = val * 2,
+            _ => unimplemented!(),
+        }
+    }
+
+    pub fn get_info(&self) -> (u16, u32, Digest) {
+        match self {
+            Node::Leaf {
+                pos, index, hash, ..
+            } => (*index, *pos, *hash),
+            Node::Internal {
+                pos, index, hash, ..
+            } => (*index, *pos, *hash),
+            Node::Hash { pos, index, hash } => (*index, *pos, *hash),
+            Node::Empty {} => (0, 0, Default::default()),
+        }
+    }
+
     pub fn hash(&self) -> Digest {
         match self {
-            Node::Empty {} => sha3_zero_hash(),
-            Node::Hash { params } => Digest(params.data.0),
-            Node::Leaf { params, .. } => Digest(params.data.0),
+            Node::Empty {} => Digest([0; 32]),
+            Node::Hash { hash, .. } => Digest(hash.0),
+            Node::Leaf { hash, .. } => Digest(hash.0),
             Node::Internal { left, right, .. } => {
                 let lh = left.as_ref().hash();
                 let rh = right.as_ref().hash();
@@ -80,105 +97,49 @@ impl Node {
         }
     }
 
-    pub fn update_from_store(&self, index: usize, pos: usize) {
+    // Set the index and position once written to store
+    pub fn set_index_and_pos(&mut self, nindex: u16, npos: u32) {
+        //println!("set_index_pos {:?}:{:?}", nindex, pos);
         match self {
-            Node::Internal { mut params, .. } => {
-                params.index = index;
-                params.set_position(pos);
-            }
-            Node::Leaf { mut params, .. } => {
-                params.index = index;
-                params.set_position(pos);
-            }
-            _ => unimplemented!(),
-        }
-    }
-
-    /// Encode a node to the database
-    pub fn encode(&self) -> Vec<u8> {
-        match self {
-            Node::Internal { left, right, .. } => {
-                let mut wtr = vec![];
-                // Do left node
-                let left_params = left.get_params();
-                // index of file
-                wtr.write_u16::<LittleEndian>((left_params.0 * 2) as u16)
-                    .unwrap();
-                // flags
-                wtr.write_u32::<LittleEndian>(left_params.1).unwrap();
-                // hash
-                wtr.extend_from_slice(&left_params.2);
-
-                // Do right node
-                let right_params = right.get_params();
-                // index of file
-                wtr.write_u16::<LittleEndian>(right_params.0 as u16)
-                    .unwrap();
-                // flags
-                wtr.write_u32::<LittleEndian>(right_params.1).unwrap();
-                // hash
-                wtr.extend_from_slice(&right_params.2);
-
-                wtr
-            }
-            Node::Leaf {
-                vindex,
-                vpos,
-                mut vsize,
-                key,
-                value,
+            Node::Internal {
+                ref mut index,
+                ref mut pos,
                 ..
             } => {
-                let mut wtr = vec![];
-                // Write Value
-                vsize = value.len();
-                // append value to buffer
-                wtr.extend_from_slice(value.as_slice());
-
-                // Write Node
-                // leaf value index
-                wtr.write_u16::<LittleEndian>((vindex * 2 + 1) as u16)
-                    .unwrap();
-                // leaf value position
-                wtr.write_u32::<LittleEndian>(*vpos as u32).unwrap();
-                // value size
-                wtr.write_u16::<LittleEndian>(vsize as u16).unwrap();
-                // append key
-                wtr.extend_from_slice(&key.0);
-
-                wtr
+                println!("mutate internal with {:?}", nindex);
+                *index = nindex;
+                *pos = npos * 2;
+            }
+            Node::Leaf {
+                ref mut index,
+                ref mut pos,
+                ..
+            } => {
+                *index = nindex;
+                *pos = npos * 2 + 1;
+                //self.position(pos);
             }
             _ => unimplemented!(),
-        }
-    }
-
-    pub fn get_params(&self) -> (usize, u32, [u8; 32]) {
-        match self {
-            Node::Internal { params, .. } => {
-                (params.index, params.get_encoded_position(), params.data.0)
-            }
-            Node::Leaf { params, .. } => {
-                (params.index, params.get_encoded_position(), params.data.0)
-            }
-            _ => (0, 0, [0u8; 32]),
         }
     }
 
     // Convert current node into a HashNode. Can't seem to make From/Into trait work for an enum
-    pub fn to_hash_node(&self) -> Self {
+    /*pub fn to_hash_node(&self) -> Self {
         match self {
-            Node::Leaf { mut params, .. } => {
-                params.data = self.hash();
-                Node::Hash { params }
-            }
-            Node::Internal { mut params, .. } => {
-                params.data = self.hash();
-                Node::Hash { params }
-            }
-            Node::Hash { params } => Node::Hash { params: *params },
+            Node::Leaf { pos, index, .. } => Node::Hash {
+                pos: *pos,
+                index: *index,
+                hash: self.hash(),
+            },
+            Node::Internal { pos, index, .. } => Node::Hash {
+                pos: *pos,
+                index: *index,
+                hash: self.hash(),
+            },
             Node::Empty {} => Node::empty(),
+            _ => *self,
         }
-    }
+    }*/
 
     // Create an Empty Node
     pub fn empty() -> Self {
@@ -186,11 +147,13 @@ impl Node {
     }
 
     // Create basic Leaf Node
-    pub fn leaf(key: Digest, value: Vec<u8>, params: NodeStore) -> Self {
+    pub fn leaf(key: Digest, value: Option<&'a [u8]>) -> Self {
         Node::Leaf {
+            pos: 0,
+            index: 0,
+            hash: Default::default(), // Should this be an Option?
             key,
             value,
-            params,
             vindex: 0,
             vpos: 0,
             vsize: 0,
@@ -198,7 +161,7 @@ impl Node {
     }
 }
 
-impl fmt::Debug for Node {
+impl<'a> fmt::Debug for Node<'a> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             Node::Empty {} => write!(f, "Node::Empty"),
@@ -206,7 +169,7 @@ impl fmt::Debug for Node {
             Node::Internal { left, right, .. } => {
                 write!(f, "Node:Internal({:?}, {:?})", left, right)
             }
-            Node::Hash { params } => write!(f, "Node::Hash({:?})", params.data),
+            Node::Hash { hash, .. } => write!(f, "Node::Hash({:?})", hash.0),
         }
     }
 }

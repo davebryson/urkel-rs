@@ -20,15 +20,15 @@ pub enum ProofType {
 }
 
 #[derive(Eq, PartialEq, Clone)]
-pub struct Proof {
+pub struct Proof<'a> {
     pub proof_type: ProofType,
     node_hashes: Vec<Digest>,
     pub key: Option<Digest>,
     pub hash: Option<Digest>,
-    pub value: Option<Vec<u8>>,
+    pub value: Option<&'a [u8]>,
 }
 
-impl Default for Proof {
+impl<'a> Default for Proof<'a> {
     fn default() -> Self {
         Proof {
             proof_type: ProofType::Deadend,
@@ -40,7 +40,7 @@ impl Default for Proof {
     }
 }
 
-impl Proof {
+impl<'a> Proof<'a> {
     pub fn depth(&self) -> usize {
         self.node_hashes.len()
     }
@@ -73,7 +73,7 @@ impl Proof {
         root_hash: Digest,
         key: Digest,
         bits: usize,
-    ) -> Result<Vec<u8>, &'static str> {
+    ) -> Result<&'a [u8], &'static str> {
         if !self.is_sane(bits) {
             return Err("Unknown");
         }
@@ -90,7 +90,7 @@ impl Proof {
             }
             ProofType::Exists => {
                 let v = self.value.as_ref().unwrap();
-                sha3_value(key, v.as_slice())
+                sha3_value(key, v)
             }
         };
 

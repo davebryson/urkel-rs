@@ -9,5 +9,5 @@ In progress implementation of an `urkel` tree from the Handshake project.
 
 ### To Do:
 - Tree.remove()
-- Store, Encoding/Decoding
+- Store, Encoding/Decoding (in-progress and breaking stuff)
 - Snapshot
