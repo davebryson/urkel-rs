@@ -63,7 +63,8 @@ impl Store {
     pub fn open() -> Self {
         // Load or create meta key
         let store_key = load_or_create_meta_key("meta.txt").expect("Can't access meta file!");
-        // This should be path and we find the current index by checking the last file in the path
+        // This should be a path and we find the current index by checking the last file in the path
+        // TODO: Hardcoded
         let filename = pad_filename(1);
         let mut f = OpenOptions::new()
             .append(true)
@@ -81,23 +82,9 @@ impl Store {
         }
     }
 
-    fn resize(&mut self, size: usize) {
-        println!("resize");
-        let diff = size - self.buffer.len();
-        if diff > 0 {
-            self.buffer.extend(iter::repeat(0).take(diff))
-        }
-    }
-
     fn write_bytes(&mut self, bits: &[u8]) {
-        //let size = bits.len() + self.pos;
-
-        //if size > self.buffer.len() {
-        //    self.resize(size);
-        //}
-
+        // TODO: Better way?
         for v in bits {
-            //self.buffer[self.pos] = *v;
             self.buffer.push(*v);
             self.pos += 1;
         }
@@ -108,7 +95,6 @@ impl Store {
     // Called from tree.write()
     pub fn write_node(&mut self, node: &mut Node) {
         let start_pos = self.pos;
-        println!("Wrote node @ {:?}", start_pos);
         let (bits, _amt) = node.encode();
 
         match node {
@@ -138,7 +124,6 @@ impl Store {
     pub fn write_value(&mut self, node: &mut Node) {
         assert!(node.is_leaf());
         let start_pos = self.pos;
-        println!("Wrote value @ {:?}", start_pos);
 
         match node {
             Node::Leaf {
@@ -161,9 +146,8 @@ impl Store {
     // Read from file (todo: add index)
     // TODO: Should return result
     fn read(&mut self, pos: u32, size: usize) -> Vec<u8> {
-        println!("Look for data @ {:?}", pos);
-
         let mut buffer = vec![0; size];
+        // TODO: Hardcoded file name for now...
         File::open("0000000001")
             .and_then(|mut f| {
                 f.seek(SeekFrom::Start(pos.into()))?;
@@ -175,15 +159,11 @@ impl Store {
 
     // Resolve hashnode -> node
     pub fn resolve<'a>(&mut self, index: u16, pos: u32, leaf: bool) -> Node<'a> {
-        println!("resolve");
-        //self.read_node(index, pos, leaf)
         let p = pos >> 1;
         if leaf {
-            println!("resolve leaf");
             let buf = self.read(p, LEAF_NODE_SIZE);
             Node::decode(buf, true)
         } else {
-            println!("resolve internal");
             let buf = self.read(p, INTERNAL_NODE_SIZE);
             Node::decode(buf, false)
         }
@@ -191,17 +171,15 @@ impl Store {
 
     // Get *value* for leaf
     pub fn retrieve(&mut self, vindex: u16, vpos: u32, vsize: u16) -> Vec<u8> {
-        println!("retrieve");
         self.read(vpos, vsize as usize)
     }
 
     // TODO: This needs to take the newroot and write to meta
     pub fn commit(&mut self) -> Result<(), Error> {
         // Write meta data to current index file
-        println!("Buffer size: {:?}", &self.buffer.len());
         // Flush buffer to disk
         self.file.write_all(&self.buffer).and_then(|_| {
-            // TODO:  Need f.sync_all()?;
+            // TODO:  Need f.sync_all()?; Move to Drop for store
             self.buffer.clear();
             self.pos = 0;
             Ok(())

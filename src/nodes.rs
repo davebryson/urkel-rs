@@ -99,14 +99,12 @@ impl<'a> Node<'a> {
 
     // Set the index and position once written to store
     pub fn set_index_and_pos(&mut self, nindex: u16, npos: u32) {
-        //println!("set_index_pos {:?}:{:?}", nindex, pos);
         match self {
             Node::Internal {
                 ref mut index,
                 ref mut pos,
                 ..
             } => {
-                println!("mutate internal with {:?}", nindex);
                 *index = nindex;
                 *pos = npos * 2;
             }

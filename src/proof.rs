@@ -1,7 +1,7 @@
 use super::hashutils::{sha3_internal, sha3_leaf, sha3_value, sha3_zero_hash, Digest};
 
 /// Determine which direction to go in the Tree based on the bit in the key
-/// Used in the tree and Proof
+/// Used in tree and proof
 pub fn has_bit(key: &Digest, index: usize) -> bool {
     let oct = index >> 3;
     let bit = index & 7;

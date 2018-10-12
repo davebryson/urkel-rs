@@ -1,3 +1,8 @@
+//! # Urkel-rs
+//!
+//! An implementation of an [Urkel (Merkle) Tree](https://handshake.org/files/handshake.txt),
+//!
+//!
 extern crate byteorder;
 extern crate rand;
 extern crate tiny_keccak;
@@ -20,6 +25,7 @@ pub struct UrkelTree<'a> {
     root: Option<Node<'a>>,
     /// Size in bits of the digest
     keysize: usize,
+    /// FF Store
     store: Store,
 }
 
@@ -32,23 +38,23 @@ impl<'a> UrkelTree<'a> {
         }
     }
 
+    /// Return the root hash of the tree or zeros for None
     pub fn get_root(&self) -> Digest {
-        // TODO: Clean this up
-        let r = self.root.as_ref().expect("Node root was None");
-        r.hash()
+        self.root.as_ref().map_or(Digest::default(), |r| r.hash())
     }
 
+    /// Insert a new key/value pair into the Tree
     pub fn insert(&mut self, nkey: Digest, value: &'a [u8]) {
         let mut depth = 0;
         let mut to_hash = Vec::<Node>::new();
         let leaf_hash = sha3_value(nkey, value);
 
         let mut root = self.root.take().unwrap();
-
         loop {
             match root {
                 Node::Empty {} => break,
                 Node::Hash { index, pos, .. } => {
+                    // Reach back to storage and convert the hash node to a leaf or internal
                     root = self.store.resolve(index, pos, root.is_leaf());
                 }
                 Node::Leaf {
@@ -57,7 +63,6 @@ impl<'a> UrkelTree<'a> {
                     if nkey == key {
                         if leaf_hash == hash {
                             self.root = Some(root);
-                            //return Some(root);
                             return;
                         }
                         break;
@@ -75,7 +80,7 @@ impl<'a> UrkelTree<'a> {
                 }
                 Node::Internal { left, right, .. } => {
                     if depth == self.keysize {
-                        panic!("Missing node at depth {}", depth);
+                        panic!("Insert: missing node at depth {}", depth);
                     }
 
                     if has_bit(&nkey, depth) {
@@ -90,7 +95,7 @@ impl<'a> UrkelTree<'a> {
             }
         }
 
-        // Start with a leaf of the new values
+        // Start with a leaf of the new K/V
         let mut new_root = Node::Leaf {
             pos: 0,
             index: 0,
@@ -125,11 +130,14 @@ impl<'a> UrkelTree<'a> {
         }
 
         self.root = Some(new_root);
-        //Some(new_root)
     }
 
+    /// Get a value (if it exists) for a given key
     pub fn get(&mut self, nkey: Digest) -> Option<Vec<u8>> {
         let mut depth = 0;
+        // Clone here to deal with borrowing issues for resolve().
+        // If current is a ref, the return from 'resolve' has a lifetime
+        // issue.  Ideally walking the tree should be ref...
         let mut current = self.root.clone().unwrap();
         loop {
             match current {
@@ -168,11 +176,12 @@ impl<'a> UrkelTree<'a> {
         }
     }
 
+    /// Prove a key does/does not exist in the Tree
     pub fn prove(&mut self, nkey: Digest) -> Option<Proof> {
         let mut depth = 0;
         let mut proof = Proof::default();
 
-        let keysize = self.keysize;
+        // Again the clone...same reason as get()
         let mut current = self.root.clone().unwrap();
         loop {
             match current {
@@ -182,8 +191,8 @@ impl<'a> UrkelTree<'a> {
                     current = self.store.resolve(index, pos, is_leaf);
                 }
                 Node::Internal { left, right, .. } => {
-                    if depth == keysize {
-                        panic!("Missing node at depth {}", depth);
+                    if depth == self.keysize {
+                        panic!("Proof: missing node at depth {}", depth);
                     }
 
                     if has_bit(&nkey, depth) {
@@ -211,7 +220,6 @@ impl<'a> UrkelTree<'a> {
                     } else {
                         proof.proof_type = ProofType::Collision;
                         proof.key = Some(key);
-                        //proof.hash = Some(val.map(|v| sha3(v)).unwrap());
                         proof.hash = Some(sha3(&val));
                     }
                     break;
@@ -226,10 +234,10 @@ impl<'a> UrkelTree<'a> {
     pub fn commit(&mut self) {
         // newroot is a node::hash
         let newroot = self.root.take().map(|t| self.write(t));
-        println!("Got the new root: {:?}", newroot);
+
+        // TODO: Pass the new root to commit for meta writing and stuff...
         self.store.commit();
-        // Write to meta
-        //self.store.commit(&newroot);
+
         self.root = newroot;
     }
 
@@ -270,8 +278,7 @@ impl<'a> UrkelTree<'a> {
                 // Now it *should* be stored
                 assert!(!tempnode.should_save(), "Didn't persist the node");
 
-                //let (newindex, newpos, _) = tempnode.get_info();
-
+                // Return brand spanking new HashNode
                 Node::Hash {
                     pos: newpos,
                     index: newindex,

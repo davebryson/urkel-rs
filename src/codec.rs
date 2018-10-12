@@ -17,7 +17,6 @@ impl<'a> NodeCodec<'a> for Node<'a> {
     fn encode(&self) -> (Vec<u8>, u8) {
         match self {
             Node::Internal { left, right, .. } => {
-                //let mut wtr = Vec::<u8>::with_capacity(INTERNAL_NODE_SIZE);
                 let mut wtr = vec![];
 
                 // Do left node
@@ -38,7 +37,6 @@ impl<'a> NodeCodec<'a> for Node<'a> {
                 // hash
                 wtr.extend_from_slice(&(right.hash()).0);
                 let l = wtr.len();
-                println!("Enocded: {:?}", l);
 
                 (wtr, l as u8)
             }
@@ -55,13 +53,7 @@ impl<'a> NodeCodec<'a> for Node<'a> {
 
                 value.map(|v| {
                     vsize = v.len() as u16;
-                    //wtr.extend_from_slice(v);
                 });
-
-                // Write Value
-                //vsize = value.map(|v| v.len() as u16).unwrap();
-                // append value to buffer
-                //wtr.extend_from_slice(value);
 
                 // Write Node
                 // leaf value index - NOTE + 1 for leaf detection
@@ -72,8 +64,6 @@ impl<'a> NodeCodec<'a> for Node<'a> {
                 wtr.write_u16::<LittleEndian>(vsize).unwrap();
                 // append key
                 wtr.extend_from_slice(&key.0);
-
-                println!("Leaf Enocded");
 
                 (wtr, LEAF_NODE_SIZE as u8)
             }
@@ -102,7 +92,6 @@ impl<'a> NodeCodec<'a> for Node<'a> {
             let vsize = rdr.read_u16::<LittleEndian>().unwrap();
 
             // Extract the key
-            //let k = &bits[8..];
             assert!(k.len() == 32);
 
             let mut keybits: [u8; 32] = Default::default();
