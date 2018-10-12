@@ -14,6 +14,7 @@ use proof::{has_bit, Proof, ProofType};
 use store::Store;
 
 /// Base-2 Merkle Tree
+#[derive(Default)]
 pub struct UrkelTree<'a> {
     /// Root Node
     root: Option<Node<'a>>,
@@ -30,6 +31,7 @@ impl<'a> UrkelTree<'a> {
             store: Default::default(),
         }
     }
+
     pub fn get_root(&self) -> Digest {
         // TODO: Clean this up
         let r = self.root.as_ref().expect("Node root was None");
@@ -37,10 +39,6 @@ impl<'a> UrkelTree<'a> {
     }
 
     pub fn insert(&mut self, nkey: Digest, value: &'a [u8]) {
-        //et root = self.root.take().unwrap();
-        //self.root = do_insert(&self.store, root, nkey, value, self.keysize);
-        //self.root = do_insert(&mut self.store, root, nkey, value, self.keysize);
-
         let mut depth = 0;
         let mut to_hash = Vec::<Node>::new();
         let leaf_hash = sha3_value(nkey, value);
@@ -130,49 +128,9 @@ impl<'a> UrkelTree<'a> {
         //Some(new_root)
     }
 
-    pub fn do_get(&mut self, mut node: &Node, nkey: Digest, mut depth: usize) -> Option<Vec<u8>> {
-        loop {
-            match node {
-                Node::Leaf {
-                    key,
-                    value,
-                    vindex,
-                    vpos,
-                    vsize,
-                    ..
-                } => {
-                    if nkey != *key {
-                        return None;
-                    }
-
-                    if value.is_some() {
-                        return value.and_then(|v| Some(Vec::from(v)));
-                    }
-
-                    // TODO: This needs refactored
-                    return Some(self.store.retrieve(*vindex, *vpos, *vsize));
-                }
-                Node::Internal { left, right, .. } => {
-                    if has_bit(&nkey, depth) {
-                        node = &*right;
-                    } else {
-                        node = &*left;
-                    }
-                    depth += 1;
-                }
-                Node::Hash { index, pos, .. } => {
-                    let n = self.store.resolve(*index, *pos, node.is_leaf());
-                    self.do_get(&n, nkey, depth);
-                }
-                _ => return None,
-            }
-        }
-    }
-
     pub fn get(&mut self, nkey: Digest) -> Option<Vec<u8>> {
         let mut depth = 0;
         let mut current = self.root.clone().unwrap();
-        //let mut current = self.root.as_ref().unwrap();
         loop {
             match current {
                 Node::Leaf {
@@ -186,8 +144,6 @@ impl<'a> UrkelTree<'a> {
                     if nkey != key {
                         return None;
                     }
-
-                    println!("GET: Val: {:?} POS: {:}", value, vpos);
                     if value.is_some() {
                         return value.and_then(|v| Some(Vec::from(v)));
                     }
@@ -212,20 +168,18 @@ impl<'a> UrkelTree<'a> {
         }
     }
 
-    pub fn prove(&self, nkey: Digest) -> Option<Proof> {
+    pub fn prove(&mut self, nkey: Digest) -> Option<Proof> {
         let mut depth = 0;
         let mut proof = Proof::default();
 
         let keysize = self.keysize;
-        //let mut current = self.root.as_ref().unwrap();
         let mut current = self.root.clone().unwrap();
         loop {
             match current {
                 Node::Empty {} => break,
-                Node::Hash { .. } => {
-                    //if let Some(n) = self.store.get(params.data) {
-                    //    current = n;
-                    //}
+                Node::Hash { index, pos, .. } => {
+                    let is_leaf = current.is_leaf();
+                    current = self.store.resolve(index, pos, is_leaf);
                 }
                 Node::Internal { left, right, .. } => {
                     if depth == keysize {
@@ -234,24 +188,31 @@ impl<'a> UrkelTree<'a> {
 
                     if has_bit(&nkey, depth) {
                         proof.push(left.hash());
-                        //current = &*right;
                         current = *right;
                     } else {
                         proof.push(right.hash());
-                        //current = &*left
                         current = *left;
                     }
 
                     depth += 1;
                 }
-                Node::Leaf { key, value, .. } => {
+                Node::Leaf {
+                    key,
+                    vindex,
+                    vpos,
+                    vsize,
+                    ..
+                } => {
+                    let val = self.store.retrieve(vindex, vpos, vsize);
+
                     if nkey == key {
                         proof.proof_type = ProofType::Exists;
-                        proof.value = value;
+                        proof.value = Some(val);
                     } else {
                         proof.proof_type = ProofType::Collision;
                         proof.key = Some(key);
-                        proof.hash = Some(value.map(|v| sha3(v)).unwrap());
+                        //proof.hash = Some(val.map(|v| sha3(v)).unwrap());
+                        proof.hash = Some(sha3(&val));
                     }
                     break;
                 }
@@ -272,8 +233,8 @@ impl<'a> UrkelTree<'a> {
         self.root = newroot;
     }
 
-    fn write(&mut self, mut n: Node<'a>) -> Node<'a> {
-        match n {
+    fn write(&mut self, mut node: Node<'a>) -> Node<'a> {
+        match node {
             Node::Empty {} => Node::empty(),
             Node::Internal {
                 pos,
@@ -305,7 +266,6 @@ impl<'a> UrkelTree<'a> {
                 }
 
                 let (newindex, newpos, _) = tempnode.get_info();
-                println!("index: {:?} pos: {:?}", newindex, newpos);
 
                 // Now it *should* be stored
                 assert!(!tempnode.should_save(), "Didn't persist the node");
@@ -319,15 +279,18 @@ impl<'a> UrkelTree<'a> {
                 }
             }
             Node::Leaf { .. } => {
-                println!("Write leaf");
-                self.store.write_value(&mut n);
-                self.store.write_node(&mut n);
-                //n.set_index_and_pos(i, p);
+                // Write the value for the leaf node...
+                // ...then the node itself
+                self.store.write_value(&mut node);
+                self.store.write_node(&mut node);
 
-                assert!(!n.should_save(), "Didn't persist the node");
+                // the index should be set!
+                assert!(!node.should_save(), "Didn't persist the node");
 
-                let (newindex, newpos, _) = n.get_info();
-                let hashed = n.hash();
+                // TODO: Cleanup aisle 5
+                // get the updated index/pos
+                let (newindex, newpos, _) = node.get_info();
+                let hashed = node.hash();
                 Node::Hash {
                     pos: newpos,
                     index: newindex,
@@ -335,8 +298,8 @@ impl<'a> UrkelTree<'a> {
                 }
             }
             Node::Hash { .. } => {
-                assert!(!n.should_save());
-                n
+                assert!(!node.should_save());
+                node
             }
         }
     }
@@ -348,37 +311,38 @@ mod tests {
 
     #[test]
     fn tree_basics() {
-        let st = Store::default();
         let mut t = UrkelTree::new();
         let key1 = sha3(b"name-1");
         let key2 = sha3(b"name-2");
 
         t.insert(key1, b"value-1");
-        t.insert(key2, b"value-2");
-        t.commit();
 
-        println!("Here");
+        for i in 3..40 {
+            let k = sha3(format!("name-{}", i).as_bytes());
+            t.insert(k, &[2u8; 20]);
+        }
+
+        t.insert(key2, b"value-2");
+
+        t.commit();
 
         assert_eq!(t.get(key1), Some(Vec::from("value-1")));
         assert_eq!(t.get(key2), Some(Vec::from("value-2")));
-        /*println!("Here2");
 
         // Test good proof
         let prf = t.prove(key2);
-        println!("Here3");
         assert!(prf.is_some());
         if let Some(pt) = prf {
             assert!(pt.proof_type == ProofType::Exists);
-            assert!(pt.value == Some(b"value-2"));
+            assert!(pt.value == Some(Vec::from("value-2")));
         }
 
-        // Test collision
+        // Test deadend (doesn't exist)
         let noproof = t.prove(sha3(b"doesn't exist"));
         assert!(noproof.is_some());
         if let Some(np) = noproof {
-            assert!(np.proof_type == ProofType::Collision);
-            assert!(np.key.is_some());
-            assert!(np.hash.is_some());
-        }*/
+            assert!(np.proof_type == ProofType::Deadend);
+            assert!(np.key.is_none());
+        }
     }
 }

@@ -12,7 +12,7 @@ pub fn has_bit(key: &Digest, index: usize) -> bool {
     }
 }
 
-#[derive(Eq, PartialEq, Clone)]
+#[derive(Eq, PartialEq, Clone, Debug)]
 pub enum ProofType {
     Exists,
     Collision,
@@ -20,15 +20,16 @@ pub enum ProofType {
 }
 
 #[derive(Eq, PartialEq, Clone)]
-pub struct Proof<'a> {
+pub struct Proof {
     pub proof_type: ProofType,
     node_hashes: Vec<Digest>,
     pub key: Option<Digest>,
     pub hash: Option<Digest>,
-    pub value: Option<&'a [u8]>,
+    //pub value: Option<&'a [u8]>,
+    pub value: Option<Vec<u8>>,
 }
 
-impl<'a> Default for Proof<'a> {
+impl<'a> Default for Proof {
     fn default() -> Self {
         Proof {
             proof_type: ProofType::Deadend,
@@ -40,7 +41,7 @@ impl<'a> Default for Proof<'a> {
     }
 }
 
-impl<'a> Proof<'a> {
+impl Proof {
     pub fn depth(&self) -> usize {
         self.node_hashes.len()
     }
@@ -73,7 +74,7 @@ impl<'a> Proof<'a> {
         root_hash: Digest,
         key: Digest,
         bits: usize,
-    ) -> Result<&'a [u8], &'static str> {
+    ) -> Result<Vec<u8>, &'static str> {
         if !self.is_sane(bits) {
             return Err("Unknown");
         }
