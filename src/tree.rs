@@ -1,4 +1,3 @@
-use super::Error;
 use hashutils::{sha3, sha3_value, Digest};
 use nodes::Node;
 use proof::{has_bit, Proof, ProofType};
