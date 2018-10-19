@@ -4,7 +4,7 @@ use nodes::{Node, INTERNAL_NODE_SIZE, LEAF_NODE_SIZE};
 use rand::{thread_rng, Rng};
 use std::fs;
 use std::fs::{File, OpenOptions};
-use std::io::{Read, Seek, SeekFrom, Write};
+use std::io::{Error, ErrorKind, Read, Seek, SeekFrom, Write};
 use std::path::Path;
 use std::path::PathBuf;
 use std::str::FromStr;
@@ -22,7 +22,6 @@ pub struct Store {
     index: u16,
     pos: usize,
     dir: PathBuf,
-    //file: File,
     files: Vec<StoreFile>,
     key: [u8; 32],
     state: MetaEntry,
@@ -140,7 +139,6 @@ impl Store {
     // Read from file
     fn read(&mut self, index: u16, pos: u32, size: usize) -> Result<Vec<u8>> {
         let mut f = get_file_handle(&get_data_file_path(&self.dir, index), false)?;
-        //.expect("Couldn't find file");
 
         let mut buffer = vec![0; size];
         f.seek(SeekFrom::Start(pos.into()))?;
@@ -166,7 +164,6 @@ impl Store {
         self.read(vindex, vpos, vsize as usize)
     }
 
-    // TODO: This needs to take the newroot and write to meta
     pub fn commit(&mut self, root_node: Option<&Node>) -> Result<()> {
         // - Write meta data and buffer to current index file
         if let Some(n) = root_node {
@@ -177,25 +174,22 @@ impl Store {
             self.state.root_pos = pos;
             self.state.root_leaf = is_leaf;
 
-            let bits = self.state.encode(self.pos as u32, self.key);
+            if let Ok(encoded) = self.state.encode(self.pos as u32, self.key) {
+                self.state.meta_index = self.index;
+                self.state.meta_pos = self.pos as u32;
+                self.write_bytes(&encoded);
 
-            self.state.meta_index = self.index;
-            self.state.meta_pos = self.pos as u32;
-
-            match bits {
-                Ok(data) => self.write_bytes(&data),
-                _ => panic!("Failed to write meta"),
+                return get_file_handle(&get_data_file_path(&self.dir, self.index), true)
+                    .and_then(|mut f| f.write_all(&self.buffer))
+                    .and_then(|_| {
+                        self.buffer.clear();
+                        self.pos = 0;
+                        Ok(())
+                    });
             }
         };
 
-        // Flush to disk
-        get_file_handle(&get_data_file_path(&self.dir, self.index), true)
-            .and_then(|mut f| f.write_all(&self.buffer))
-            .and_then(|_| {
-                self.buffer.clear();
-                self.pos = 0;
-                Ok(())
-            })
+        Err(Error::new(ErrorKind::Other, "Failed on commit"))
     }
 }
 
@@ -254,6 +248,7 @@ fn find_data_files(path: &Path) -> Result<Vec<StoreFile>> {
             }
         }
     }
+
     // Sort to the latest index is the first element
     data_files.sort_by(|a, b| b.index.cmp(&a.index));
     Ok(data_files)
@@ -283,7 +278,6 @@ pub fn random_key() -> [u8; 32] {
 fn load_or_create_meta_key(dir: &str) -> Result<[u8; 32]> {
     let path = Path::new(dir).join("meta");
     if path.exists() {
-        println!("File exists");
         // Read the key if the meta file exists
         OpenOptions::new().read(true).open(path).and_then(|mut f| {
             let mut buffer = [0; 32];
