@@ -9,7 +9,7 @@ use std::io::{Seek, SeekFrom};
 use std::path::PathBuf;
 
 const META_MAGIC: u32 = 0x6d72_6b6c;
-const META_SIZE: u32 = 36; // 4 + 2 + 4 + 2 + 4 + 20;
+const META_SIZE: usize = 36; // 4 + 2 + 4 + 2 + 4 + 20;
 const SLAB_SIZE: u64 = 1_048_572; // 1mb
 
 #[derive(Clone, Debug)]
@@ -37,7 +37,7 @@ impl Default for MetaEntry {
 impl MetaEntry {
     /// Encode the metadata for inclusion in the FF
     pub fn encode(&self, buffer_pos: u32, meta_key: [u8; 32]) -> Result<Vec<u8>> {
-        let padding = META_SIZE - (buffer_pos % META_SIZE);
+        let padding = META_SIZE - (buffer_pos as usize % META_SIZE);
         let mut wtr = vec![0; padding as usize];
 
         let leaf_flag = if self.root_leaf { 1 } else { 0 };
@@ -109,7 +109,7 @@ pub fn recover_meta(path: &PathBuf, file_index: u16, meta_key: [u8; 32]) -> Resu
         size = m.len();
     }
 
-    let metasize = 36;
+    let metasize = META_SIZE as u64;
     let mut off = size - (size % metasize);
 
     while off >= metasize {
@@ -120,15 +120,6 @@ pub fn recover_meta(path: &PathBuf, file_index: u16, meta_key: [u8; 32]) -> Resu
         } else {
             off
         };
-
-        // Old
-        /*
-        let mut size = off;
-
-        if off >= SLAB_SIZE {
-            pos = off - SLAB_SIZE;
-            size = SLAB_SIZE;
-        }*/
 
         f.seek(SeekFrom::Start(pos))?;
         {
@@ -152,24 +143,18 @@ pub fn recover_meta(path: &PathBuf, file_index: u16, meta_key: [u8; 32]) -> Resu
             }
 
             let ind: usize = size as usize;
-            if let Ok(result) = MetaEntry::decode(&buffer[ind..ind + 36], meta_key){
+            if let Ok(result) = MetaEntry::decode(&buffer[ind..ind + META_SIZE], meta_key){
                 let mut state = result.clone();
                 state.meta_index = file_index;
                 state.meta_pos = size as u32;
                 return Ok((state, result))
 
             }
-
-
-            // TODO: Set meta_index and meta_pos here!
-            //assert!(result.is_ok());
-            //println!("Meta: {:?}", result);
-
         }
     }
 
     Err(Error::new(
         ErrorKind::Other,
-        "Didn't find meta in this file",
+        "Didn't find it! What's a meta with you?",
     ))
 }
