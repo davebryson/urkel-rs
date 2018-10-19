@@ -8,6 +8,7 @@ extern crate rand;
 extern crate tiny_keccak;
 
 mod hashutils;
+mod metadata;
 mod nodes;
 pub mod proof;
 mod store;
