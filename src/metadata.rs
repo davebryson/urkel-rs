@@ -19,7 +19,7 @@ pub struct MetaEntry {
     pub root_index: u16,
     pub root_pos: u32,
     pub root_leaf: bool,
-    //root_node: Option<Node>  TODO: Need to a add hashnode from meta here (see store.getRoot())
+    //pub root_node: Option<Node<'a>>,
 }
 
 impl Default for MetaEntry {
@@ -100,9 +100,12 @@ impl MetaEntry {
 }
 
 // Opens the given file and attempts to find the file meta
-pub fn recover_meta(path: &PathBuf, file_index: u16, meta_key: [u8; 32]) -> Result<(MetaEntry, MetaEntry)> {
+pub fn recover_meta(
+    path: &PathBuf,
+    file_index: u16,
+    meta_key: [u8; 32],
+) -> Result<(MetaEntry, MetaEntry)> {
     let mut buffer = Vec::<u8>::with_capacity(SLAB_SIZE as usize);
-
     let mut f = File::open(path).unwrap();
     let mut size: u64 = 0;
     if let Ok(m) = f.metadata() {
@@ -125,7 +128,7 @@ pub fn recover_meta(path: &PathBuf, file_index: u16, meta_key: [u8; 32]) -> Resu
         {
             let reference = f.by_ref();
             reference.take(size).read_to_end(&mut buffer)?;
-        }
+        } // drop reference here..
 
         assert!(!buffer.is_empty(), "Buffer is empty!");
         let mut cursor = Cursor::new(&buffer);
@@ -143,12 +146,11 @@ pub fn recover_meta(path: &PathBuf, file_index: u16, meta_key: [u8; 32]) -> Resu
             }
 
             let ind: usize = size as usize;
-            if let Ok(result) = MetaEntry::decode(&buffer[ind..ind + META_SIZE], meta_key){
+            if let Ok(result) = MetaEntry::decode(&buffer[ind..ind + META_SIZE], meta_key) {
                 let mut state = result.clone();
                 state.meta_index = file_index;
                 state.meta_pos = size as u32;
-                return Ok((state, result))
-
+                return Ok((state, result));
             }
         }
     }

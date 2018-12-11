@@ -10,7 +10,7 @@ use std::path::PathBuf;
 use std::str::FromStr;
 
 pub const KEY_SIZE: usize = 32;
-const MAX_FILE_SIZE: u32 = 0x7fff_f000; // 2gb
+const MAX_FILE_SIZE: usize = 0x7fff_f000; // 2gb
 
 const DEFAULT_BUFFER_SIZE: usize = 1024 * 8;
 const LOCK_FILE_NAME: &str = "urkel.lock";
@@ -44,6 +44,7 @@ impl Store {
         let logfiles = find_data_files(&path).unwrap();
 
         if logfiles.is_empty() {
+            // This is a new store
             Store {
                 buffer: Vec::<u8>::with_capacity(DEFAULT_BUFFER_SIZE),
                 index: 1,
@@ -55,11 +56,13 @@ impl Store {
                 last_state: MetaEntry::default(),
             }
         } else {
+            // Get the latest index, and seek to the end to get the last pos
             let index = logfiles[0].index;
             let mut f =
                 get_file_handle(&get_data_file_path(&path, index), false).expect("Failed on file");
             let size = f.seek(SeekFrom::End(0)).unwrap();
 
+            // Load the meta
             let (newstate, oldstate) = load_state(&logfiles, &path, store_key);
 
             Store {
@@ -76,6 +79,13 @@ impl Store {
     }
 
     fn write_bytes(&mut self, bits: &[u8]) {
+        // TODO: Check filesize here. Create new index file if we're getting full
+        if self.buffer.len() + bits.len() >= MAX_FILE_SIZE {
+            // Close and flush the current file
+            // Create a new one
+            // update the index number
+            // Update the cursor pos
+        }
         for v in bits {
             self.buffer.push(*v);
             self.pos += 1;
@@ -173,23 +183,39 @@ impl Store {
             self.state.root_index = index;
             self.state.root_pos = pos;
             self.state.root_leaf = is_leaf;
+            //TODO: Set state.root_node
 
+            // Write to file
             if let Ok(encoded) = self.state.encode(self.pos as u32, self.key) {
                 self.state.meta_index = self.index;
                 self.state.meta_pos = self.pos as u32;
-                self.write_bytes(&encoded);
 
-                return get_file_handle(&get_data_file_path(&self.dir, self.index), true)
+                // Write metaroot to buffer
+                self.write_bytes(&encoded);
+                // Write all of the buffer to file
+                self.write_to_file()?;
+
+                /*return get_file_handle(&get_data_file_path(&self.dir, self.index), true)
                     .and_then(|mut f| f.write_all(&self.buffer))
                     .and_then(|_| {
                         self.buffer.clear();
                         self.pos = 0;
                         Ok(())
-                    });
+                    });*/
             }
         };
 
         Err(Error::new(ErrorKind::Other, "Failed on commit"))
+    }
+
+    fn write_to_file(&mut self) -> Result<()> {
+        get_file_handle(&get_data_file_path(&self.dir, self.index), true)
+            .and_then(|mut f| f.write_all(&self.buffer))
+            .and_then(|_| {
+                self.buffer.clear();
+                self.pos = 0;
+                Ok(())
+            })
     }
 }
 
@@ -197,6 +223,7 @@ fn load_state(files: &[StoreFile], dir: &PathBuf, key: [u8; 32]) -> (MetaEntry, 
     let mut file_index = files[0].index;
     while file_index >= 1 {
         let fname = get_data_file_path(dir, file_index);
+        // Load meta returning new/last
         if let Ok((st, old)) = recover_meta(&fname, file_index, key) {
             return (st, old);
         }
@@ -205,11 +232,11 @@ fn load_state(files: &[StoreFile], dir: &PathBuf, key: [u8; 32]) -> (MetaEntry, 
     (MetaEntry::default(), MetaEntry::default())
 }
 
-struct StoreWriter {}
+//struct StoreWriter {}
 
-struct NodeWriter {}
+//struct NodeWriter {}
 
-struct MetaWriter {}
+//struct MetaWriter {}
 
 // Loading log files
 
@@ -312,5 +339,4 @@ mod tests {
         assert!(result.is_ok());
         println!("Meta: {:?}", result);
     }
-
 }

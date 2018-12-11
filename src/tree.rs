@@ -116,7 +116,7 @@ impl<'a> UrkelTree<'a> {
                 };
             }
         }
-
+        // Set the new root
         self.root = Some(new_root);
     }
 
